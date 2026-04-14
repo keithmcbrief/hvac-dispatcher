@@ -96,13 +96,13 @@ The repo includes a `Dockerfile` and `fly.toml` for Fly.io.
 Create a persistent volume before first deploy:
 
 ```bash
-fly volumes create data -a eddy-hvac-dispatch -r ord -s 1
+fly volumes create data -a hvac-dispatcher -r ord -s 1
 ```
 
 Set production secrets with `fly secrets set`; do not commit secrets to git.
 
 ```bash
-fly secrets set -a eddy-hvac-dispatch \
+fly secrets set -a hvac-dispatcher \
   TWILIO_ACCOUNT_SID="..." \
   TWILIO_AUTH_TOKEN="..." \
   TWILIO_NUMBER="+1..." \
@@ -118,7 +118,7 @@ fly secrets set -a eddy-hvac-dispatch \
 Deploy a single Machine:
 
 ```bash
-fly deploy -a eddy-hvac-dispatch --ha=false
+fly deploy -a hvac-dispatcher --ha=false
 ```
 
 This service is designed for one running instance because it uses local SQLite and an in-process polling loop.
@@ -131,4 +131,3 @@ This service is designed for one running instance because it uses local SQLite a
 - `webhook_logs/`, local DB files, and tests are excluded from production Docker builds.
 - Do not set `SKIP_SIGNATURE_VALIDATION=true` in production.
 - Use Fly secrets or another secret manager for runtime credentials.
-

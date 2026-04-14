@@ -1,4 +1,4 @@
-app = "eddy-hvac-dispatch"
+app = "hvac-dispatcher"
 primary_region = "ord"
 
 [build]
