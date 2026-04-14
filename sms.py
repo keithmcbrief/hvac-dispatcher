@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import logging
+import time
 
 from twilio.rest import Client
 from twilio.request_validator import RequestValidator
@@ -90,12 +91,42 @@ def validate_twilio_signature(request_url: str, params: dict, signature: str) ->
 def validate_retell_signature(payload_bytes: bytes, signature: str, api_key: str) -> bool:
     """Validate the ``x-retell-signature`` header from Retell webhooks.
 
-    Retell uses HMAC-SHA256 with the API key as the secret, applied to the raw
-    request body.
+    Retell's current signature format is ``v={timestamp},d={digest}``, where
+    digest is HMAC-SHA256(api_key, raw_body + timestamp). The timestamp check
+    limits replayed webhook attempts. A legacy plain hex digest is still
+    accepted for local tests and older fixtures.
     """
-    expected = hmac.new(
+    if not api_key or not signature:
+        return False
+
+    parts = {}
+    for item in signature.split(","):
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        parts[key.strip()] = value.strip()
+
+    timestamp = parts.get("v")
+    digest = parts.get("d")
+    if timestamp and digest:
+        try:
+            signed_at = int(timestamp)
+        except ValueError:
+            return False
+
+        if abs(time.time() - signed_at) > 300:
+            return False
+
+        expected = hmac.new(
+            api_key.encode("utf-8"),
+            payload_bytes + timestamp.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(expected, digest)
+
+    legacy_expected = hmac.new(
         api_key.encode("utf-8"),
         payload_bytes,
         hashlib.sha256,
     ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    return hmac.compare_digest(legacy_expected, signature)
