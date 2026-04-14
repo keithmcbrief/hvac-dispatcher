@@ -144,12 +144,24 @@ def validate_retell_signature_with_reason(payload_bytes: bytes, signature: str, 
             info["reason"] = "expired_timestamp"
             return False, info
 
+        body_text = payload_bytes.decode("utf-8")
         expected = hmac.new(
             api_key.encode("utf-8"),
-            payload_bytes + timestamp.encode("utf-8"),
+            f"{body_text}{timestamp}".encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
         valid = hmac.compare_digest(expected, digest)
+        info["matched_scheme"] = "body_timestamp" if valid else ""
+
+        if not valid:
+            timestamp_first_expected = hmac.new(
+                api_key.encode("utf-8"),
+                f"{timestamp}{body_text}".encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            valid = hmac.compare_digest(timestamp_first_expected, digest)
+            info["matched_scheme"] = "timestamp_body" if valid else ""
+
         info["reason"] = "ok" if valid else "digest_mismatch"
         return valid, info
 
