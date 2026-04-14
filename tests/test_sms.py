@@ -222,3 +222,17 @@ class TestValidateRetellSignature:
         ).hexdigest()
 
         assert sms.validate_retell_signature(payload, f"v={timestamp},d={digest}", api_key) is True
+
+    def test_signature_without_key_prefix(self, _reset_sms, monkeypatch):
+        sms = _reset_sms
+        api_key = "key_abc123"
+        payload = b'{"event":"call_ended"}'
+        monkeypatch.setattr(sms.time, "time", lambda: 1_700_000_000)
+        timestamp = "1700000000000"
+        digest = hmac.new(
+            b"abc123",
+            payload + timestamp.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+
+        assert sms.validate_retell_signature(payload, f"v={timestamp},d={digest}", api_key) is True

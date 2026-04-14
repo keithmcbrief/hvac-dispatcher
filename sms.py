@@ -158,29 +158,43 @@ def validate_retell_signature_with_reason(payload_bytes: bytes, signature: str, 
         except json.JSONDecodeError:
             pass
 
+        secret_candidates = [("literal", api_key)]
+        if api_key.startswith("key_"):
+            secret_candidates.append(("without_key_prefix", api_key.removeprefix("key_")))
+        secret_candidates.append(("bearer_literal", f"Bearer {api_key}"))
+
         valid = False
         info["matched_scheme"] = ""
-        for body_name, candidate_body in candidate_bodies:
-            expected = hmac.new(
-                api_key.encode("utf-8"),
-                f"{candidate_body}{timestamp}".encode("utf-8"),
-                hashlib.sha256,
-            ).hexdigest()
-            valid = hmac.compare_digest(expected, digest)
+        info["matched_key_variant"] = ""
+        for key_name, candidate_secret in secret_candidates:
+            for body_name, candidate_body in candidate_bodies:
+                expected = hmac.new(
+                    candidate_secret.encode("utf-8"),
+                    f"{candidate_body}{timestamp}".encode("utf-8"),
+                    hashlib.sha256,
+                ).hexdigest()
+                valid = hmac.compare_digest(expected, digest)
+                if valid:
+                    info["matched_scheme"] = f"{body_name}_timestamp"
+                    info["matched_key_variant"] = key_name
+                    break
             if valid:
-                info["matched_scheme"] = f"{body_name}_timestamp"
                 break
 
         if not valid:
-            for body_name, candidate_body in candidate_bodies:
-                timestamp_first_expected = hmac.new(
-                    api_key.encode("utf-8"),
-                    f"{timestamp}{candidate_body}".encode("utf-8"),
-                    hashlib.sha256,
-                ).hexdigest()
-                valid = hmac.compare_digest(timestamp_first_expected, digest)
+            for key_name, candidate_secret in secret_candidates:
+                for body_name, candidate_body in candidate_bodies:
+                    timestamp_first_expected = hmac.new(
+                        candidate_secret.encode("utf-8"),
+                        f"{timestamp}{candidate_body}".encode("utf-8"),
+                        hashlib.sha256,
+                    ).hexdigest()
+                    valid = hmac.compare_digest(timestamp_first_expected, digest)
+                    if valid:
+                        info["matched_scheme"] = f"timestamp_{body_name}"
+                        info["matched_key_variant"] = key_name
+                        break
                 if valid:
-                    info["matched_scheme"] = f"timestamp_{body_name}"
                     break
 
         info["reason"] = "ok" if valid else "digest_mismatch"
