@@ -1,6 +1,7 @@
 """FastAPI application for Eddie's HVAC Contractor Dispatch Agent."""
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -76,6 +77,16 @@ TWIML_EMPTY = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 SKIP_SIGNATURE_VALIDATION = os.getenv("SKIP_SIGNATURE_VALIDATION", "").lower() in ("true", "1", "yes")
 
 
+def _has_valid_retell_webhook_token(request: Request) -> bool:
+    configured_token = config.RETELL_WEBHOOK_TOKEN
+    supplied_token = request.query_params.get("token", "")
+    return bool(
+        configured_token
+        and supplied_token
+        and hmac.compare_digest(supplied_token, configured_token)
+    )
+
+
 @app.get("/health")
 async def health():
     return {"status": "healthy", "version": "1.0.0"}
@@ -88,22 +99,27 @@ async def webhook_retell(request: Request):
 
     if not SKIP_SIGNATURE_VALIDATION:
         if not sms.validate_retell_signature(body_bytes, signature, config.RETELL_API_KEY):
-            _valid, signature_info = sms.validate_retell_signature_with_reason(
-                body_bytes,
-                signature,
-                config.RETELL_API_KEY,
-            )
-            signature_info["signature_header_names"] = [
-                key
-                for key in request.headers.keys()
-                if "signature" in key.lower() or "retell" in key.lower()
-            ]
-            signature_info["content_type"] = request.headers.get("content-type", "")
-            logger.warning(
-                "Invalid Retell signature: %s",
-                json.dumps(signature_info, sort_keys=True),
-            )
-            return JSONResponse(status_code=403, content={"error": "Invalid signature"})
+            if _has_valid_retell_webhook_token(request):
+                logger.info("Retell webhook accepted by token fallback")
+            else:
+                _valid, signature_info = sms.validate_retell_signature_with_reason(
+                    body_bytes,
+                    signature,
+                    config.RETELL_API_KEY,
+                )
+                signature_info["signature_header_names"] = [
+                    key
+                    for key in request.headers.keys()
+                    if "signature" in key.lower() or "retell" in key.lower()
+                ]
+                signature_info["content_type"] = request.headers.get("content-type", "")
+                signature_info["token_fallback_configured"] = bool(config.RETELL_WEBHOOK_TOKEN)
+                signature_info["token_fallback_present"] = bool(request.query_params.get("token", ""))
+                logger.warning(
+                    "Invalid Retell signature: %s",
+                    json.dumps(signature_info, sort_keys=True),
+                )
+                return JSONResponse(status_code=403, content={"error": "Invalid signature"})
 
     data = json.loads(body_bytes)
 

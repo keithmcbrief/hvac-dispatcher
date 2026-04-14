@@ -93,6 +93,30 @@ class TestRetellWebhook:
         assert resp.status_code == 403
 
     @patch("main.dispatch.start_dispatch")
+    def test_valid_webhook_token_accepts_invalid_signature(self, mock_dispatch, client, monkeypatch):
+        import main
+        monkeypatch.setattr(main.config, "RETELL_WEBHOOK_TOKEN", "test-retell-token")
+
+        payload = {
+            "call_id": "retell-token-001",
+            "customer_name": "Token Customer",
+            "phone": "+15551234567",
+            "address": "123 Main St",
+            "service_type": "AC Repair",
+            "issue_description": "Unit not cooling",
+        }
+        body = json.dumps(payload).encode()
+        resp = client.post(
+            "/webhook/retell?token=test-retell-token",
+            content=body,
+            headers={"x-retell-signature": "badsig"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        mock_dispatch.assert_called_once()
+
+    @patch("main.dispatch.start_dispatch")
     @patch("main.sms.validate_retell_signature", return_value=True)
     def test_creates_job_and_dispatches(self, mock_validate, mock_dispatch, client):
         payload = {

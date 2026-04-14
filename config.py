@@ -17,6 +17,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # Retell (signature validation)
 RETELL_API_KEY = os.getenv("RETELL_API_KEY", "")
+RETELL_WEBHOOK_TOKEN = os.getenv("RETELL_WEBHOOK_TOKEN", "")
 SAVE_WEBHOOK_LOGS = os.getenv("SAVE_WEBHOOK_LOGS", "").lower() in ("true", "1", "yes")
 
 # Alert / builder phone
