@@ -86,8 +86,24 @@ async def webhook_retell(request: Request):
     body_bytes = await request.body()
     signature = request.headers.get("x-retell-signature", "")
 
-    if not SKIP_SIGNATURE_VALIDATION and not sms.validate_retell_signature(body_bytes, signature, config.RETELL_API_KEY):
-        return JSONResponse(status_code=403, content={"error": "Invalid signature"})
+    if not SKIP_SIGNATURE_VALIDATION:
+        if not sms.validate_retell_signature(body_bytes, signature, config.RETELL_API_KEY):
+            _valid, signature_info = sms.validate_retell_signature_with_reason(
+                body_bytes,
+                signature,
+                config.RETELL_API_KEY,
+            )
+            signature_info["signature_header_names"] = [
+                key
+                for key in request.headers.keys()
+                if "signature" in key.lower() or "retell" in key.lower()
+            ]
+            signature_info["content_type"] = request.headers.get("content-type", "")
+            logger.warning(
+                "Invalid Retell signature: %s",
+                json.dumps(signature_info, sort_keys=True),
+            )
+            return JSONResponse(status_code=403, content={"error": "Invalid signature"})
 
     data = json.loads(body_bytes)
 

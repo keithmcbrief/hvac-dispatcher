@@ -96,8 +96,26 @@ def validate_retell_signature(payload_bytes: bytes, signature: str, api_key: str
     timestamp check limits replayed webhook attempts. A legacy plain hex digest
     is still accepted for local tests and older fixtures.
     """
-    if not api_key or not signature:
-        return False
+    valid, _reason = validate_retell_signature_with_reason(payload_bytes, signature, api_key)
+    return valid
+
+
+def validate_retell_signature_with_reason(payload_bytes: bytes, signature: str, api_key: str) -> tuple[bool, dict]:
+    """Validate a Retell signature and return metadata safe to log."""
+    info = {
+        "payload_len": len(payload_bytes),
+        "signature_present": bool(signature),
+        "signature_len": len(signature or ""),
+        "api_key_present": bool(api_key),
+        "api_key_len": len(api_key or ""),
+    }
+
+    if not api_key:
+        info["reason"] = "missing_api_key"
+        return False, info
+    if not signature:
+        info["reason"] = "missing_signature"
+        return False, info
 
     parts = {}
     for item in signature.split(","):
@@ -108,25 +126,38 @@ def validate_retell_signature(payload_bytes: bytes, signature: str, api_key: str
 
     timestamp = parts.get("v")
     digest = parts.get("d")
+    info["has_timestamp"] = bool(timestamp)
+    info["has_digest"] = bool(digest)
+    info["timestamp_len"] = len(timestamp or "")
+    info["digest_len"] = len(digest or "")
+
     if timestamp and digest:
         try:
             signed_at = int(timestamp)
         except ValueError:
-            return False
+            info["reason"] = "invalid_timestamp"
+            return False, info
 
-        if abs(int(time.time() * 1000) - signed_at) > 5 * 60 * 1000:
-            return False
+        delta_ms = int(time.time() * 1000) - signed_at
+        info["timestamp_delta_ms"] = delta_ms
+        if abs(delta_ms) > 5 * 60 * 1000:
+            info["reason"] = "expired_timestamp"
+            return False, info
 
         expected = hmac.new(
             api_key.encode("utf-8"),
             payload_bytes + timestamp.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
-        return hmac.compare_digest(expected, digest)
+        valid = hmac.compare_digest(expected, digest)
+        info["reason"] = "ok" if valid else "digest_mismatch"
+        return valid, info
 
     legacy_expected = hmac.new(
         api_key.encode("utf-8"),
         payload_bytes,
         hashlib.sha256,
     ).hexdigest()
-    return hmac.compare_digest(legacy_expected, signature)
+    valid = hmac.compare_digest(legacy_expected, signature)
+    info["reason"] = "legacy_ok" if valid else "malformed_or_legacy_digest_mismatch"
+    return valid, info
