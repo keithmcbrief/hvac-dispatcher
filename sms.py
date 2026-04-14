@@ -91,10 +91,10 @@ def validate_twilio_signature(request_url: str, params: dict, signature: str) ->
 def validate_retell_signature(payload_bytes: bytes, signature: str, api_key: str) -> bool:
     """Validate the ``x-retell-signature`` header from Retell webhooks.
 
-    Retell's current signature format is ``v={timestamp},d={digest}``, where
-    digest is HMAC-SHA256(api_key, raw_body + timestamp). The timestamp check
-    limits replayed webhook attempts. A legacy plain hex digest is still
-    accepted for local tests and older fixtures.
+    Retell's current signature format is ``v={timestamp_ms},d={digest}``,
+    where digest is HMAC-SHA256(api_key, raw_body + timestamp_ms). The
+    timestamp check limits replayed webhook attempts. A legacy plain hex digest
+    is still accepted for local tests and older fixtures.
     """
     if not api_key or not signature:
         return False
@@ -114,7 +114,7 @@ def validate_retell_signature(payload_bytes: bytes, signature: str, api_key: str
         except ValueError:
             return False
 
-        if abs(time.time() - signed_at) > 300:
+        if abs(int(time.time() * 1000) - signed_at) > 5 * 60 * 1000:
             return False
 
         expected = hmac.new(

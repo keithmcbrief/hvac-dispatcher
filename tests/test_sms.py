@@ -155,7 +155,7 @@ class TestValidateRetellSignature:
         api_key = "my_secret_key"
         payload = b'{"event":"call_ended"}'
         monkeypatch.setattr(sms.time, "time", lambda: 1_700_000_000)
-        timestamp = "1700000000"
+        timestamp = "1700000000000"
         digest = hmac.new(
             api_key.encode(),
             payload + timestamp.encode(),
@@ -175,7 +175,7 @@ class TestValidateRetellSignature:
         api_key = "secret"
         original = b'{"amount":100}'
         monkeypatch.setattr(sms.time, "time", lambda: 1_700_000_000)
-        timestamp = "1700000000"
+        timestamp = "1700000000000"
         digest = hmac.new(
             api_key.encode(),
             original + timestamp.encode(),
@@ -191,7 +191,7 @@ class TestValidateRetellSignature:
         api_key = "secret"
         payload = b'{"event":"call_ended"}'
         monkeypatch.setattr(sms.time, "time", lambda: 1_700_000_600)
-        timestamp = "1700000000"
+        timestamp = "1700000000000"
         digest = hmac.new(
             api_key.encode(),
             payload + timestamp.encode(),
