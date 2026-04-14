@@ -87,6 +87,90 @@ def _has_valid_retell_webhook_token(request: Request, path_token: str = "") -> b
     )
 
 
+def _as_dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _case_get(source: dict, field: str):
+    if field in source:
+        return source[field]
+
+    field_lower = field.lower()
+    for key, value in source.items():
+        if isinstance(key, str) and key.lower() == field_lower:
+            return value
+    return None
+
+
+def _normalize_us_phone(phone: str) -> str:
+    phone = phone.strip()
+    if not phone or phone.startswith("+"):
+        return phone
+
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if digits:
+        return f"+{digits}"
+    return phone
+
+
+def _retell_payload_sources(data: dict) -> tuple[str, dict, dict, dict, tuple[dict, ...]]:
+    root = _as_dict(data)
+    wrapper = _as_dict(root.get("data"))
+
+    call_data = _as_dict(root.get("call")) or _as_dict(wrapper.get("call"))
+    if not call_data and any(
+        key in wrapper for key in ("call_id", "call_analysis", "custom_analysis_data")
+    ):
+        call_data = wrapper
+    if not call_data and any(
+        key in root for key in ("call_id", "call_analysis", "custom_analysis_data")
+    ):
+        call_data = root
+
+    call_analysis = (
+        _as_dict(call_data.get("call_analysis"))
+        or _as_dict(wrapper.get("call_analysis"))
+        or _as_dict(root.get("call_analysis"))
+    )
+    custom = (
+        _as_dict(call_analysis.get("custom_analysis_data"))
+        or _as_dict(call_data.get("custom_analysis_data"))
+        or _as_dict(wrapper.get("custom_analysis_data"))
+        or _as_dict(root.get("custom_analysis_data"))
+    )
+    legacy_analysis = (
+        _as_dict(call_data.get("analysis"))
+        or _as_dict(wrapper.get("analysis"))
+        or _as_dict(root.get("analysis"))
+    )
+    dynamic_vars = (
+        _as_dict(call_data.get("retell_llm_dynamic_variables"))
+        or _as_dict(wrapper.get("retell_llm_dynamic_variables"))
+        or _as_dict(root.get("retell_llm_dynamic_variables"))
+    )
+
+    event_type = (
+        root.get("event")
+        or root.get("event_type")
+        or wrapper.get("event")
+        or wrapper.get("event_type")
+        or ""
+    )
+    sources = (custom, dynamic_vars, legacy_analysis, call_analysis, call_data, wrapper, root)
+    return str(event_type), call_data, call_analysis, custom, sources
+
+
+def _extract_from_sources(sources: tuple[dict, ...], *fields, default=""):
+    for field in fields:
+        for source in sources:
+            val = _case_get(source, field)
+            if val is not None and val != "":
+                return val
+    return default
+
+
 @app.get("/health")
 async def health():
     return {"status": "healthy", "version": "1.0.0"}
@@ -124,7 +208,12 @@ async def webhook_retell(request: Request, webhook_token: str = ""):
                 )
                 return JSONResponse(status_code=403, content={"error": "Invalid signature"})
 
-    data = json.loads(body_bytes)
+    try:
+        data = json.loads(body_bytes)
+    except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
+    if not isinstance(data, dict):
+        return JSONResponse(status_code=400, content={"error": "Invalid Retell payload"})
 
     if config.SAVE_WEBHOOK_LOGS:
         os.makedirs("webhook_logs", exist_ok=True)
@@ -133,45 +222,49 @@ async def webhook_retell(request: Request, webhook_token: str = ""):
             json.dump(data, f, indent=2)
         logger.info("Retell webhook saved to %s", log_file)
 
-    # Retell's real format puts extracted data in:
-    #   call.call_analysis.custom_analysis_data.{caller_name, caller_phone, service_address, ...}
-    # Also support flat test format and dynamic_variables for local testing.
-    call_data = data.get("call", {})
-    legacy_analysis = call_data.get("analysis", {})
-    call_analysis = call_data.get("call_analysis", {})
-    custom = call_analysis.get("custom_analysis_data", {})
-    dynamic_vars = call_data.get("retell_llm_dynamic_variables", {})
+    event_type, call_data, call_analysis, custom, sources = _retell_payload_sources(data)
 
-    # Helper: check custom_analysis_data → dynamic_vars → legacy analysis → call_data → top-level
-    # Tries multiple field name variants (Retell uses different names than our DB)
+    # Helper: check custom_analysis_data -> dynamic_vars -> legacy analysis
+    # -> call_analysis -> call_data -> wrapper/top-level data.
     def _extract(*fields, default=""):
-        for field in fields:
-            for source in (custom, dynamic_vars, legacy_analysis, call_analysis, call_data, data):
-                val = source.get(field)
-                if val:
-                    return str(val) if val is not None else val
-        return default
+        val = _extract_from_sources(sources, *fields, default=default)
+        return str(val) if val is not None else val
 
     customer_name = _extract("caller_name", "customer_name")
     phone = _extract("caller_phone", "phone", "from_number")
     address = _extract("service_address", "address")
     service_type = _extract("service_needed", "service_type", default=None)
     issue_description = _extract("Issue_description", "issue_description", default=None)
-    retell_call_id = call_data.get("call_id") or data.get("call_id", "")
-    transcript = call_data.get("transcript", "")
-    recording_url = call_data.get("recording_url", "")
+    retell_call_id = _extract("call_id", default="")
+    transcript = _extract("transcript", default="")
+    recording_url = _extract("recording_url", default="")
+
+    if event_type and event_type != "call_analyzed" and not address:
+        logger.info(
+            "Ignoring Retell event before analysis: event=%s call_id=%s",
+            event_type,
+            retell_call_id,
+        )
+        return {
+            "status": "ignored",
+            "reason": "waiting_for_call_analyzed",
+            "event": event_type,
+        }
 
     # Normalize priority: Retell uses "urgency" with values like "Emergency"
     raw_urgency = _extract("urgency", "priority", default="normal")
     priority = "emergency" if raw_urgency.lower() in ("emergency", "urgent", "asap") else "normal"
 
     # Spam filter: skip dispatch if no address, but always notify Eddie
-    is_lead = custom.get("is_lead", True)
-    if is_lead is False or not address:
+    is_lead = _extract_from_sources(sources, "is_lead", default=True)
+    is_not_lead = (
+        is_lead is False
+        or (isinstance(is_lead, str) and is_lead.lower() in ("false", "0", "no"))
+    )
+    if is_not_lead or not address:
         logger.info("Skipping non-lead/spam call: %s", retell_call_id)
         reason = "no address provided" if not address else "not a lead"
-        recording_url_val = call_data.get("recording_url", "")
-        recording_line = f"\n🔊 Recording: {recording_url_val}" if recording_url_val else ""
+        recording_line = f"\n🔊 Recording: {recording_url}" if recording_url else ""
         slack_module.send_slack_message(
             f"⚠️ Call received but NOT dispatched ({reason})\n\n"
             f"Customer: {customer_name or 'Unknown'} ({phone or 'no phone'})\n"
@@ -184,7 +277,7 @@ async def webhook_retell(request: Request, webhook_token: str = ""):
 
     # Normalize phone: ensure it starts with +
     if phone and not phone.startswith("+"):
-        phone = f"+{phone}"
+        phone = _normalize_us_phone(phone)
 
     conn = db_module.get_connection()
     try:

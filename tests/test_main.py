@@ -226,6 +226,97 @@ class TestRetellWebhook:
         assert data["status"] == "ok"
         mock_dispatch.assert_called_once()
 
+    @patch("main.dispatch.start_dispatch")
+    @patch("main.sms.validate_retell_signature", return_value=True)
+    def test_real_retell_call_analyzed_format(self, mock_validate, mock_dispatch, client, conn, db):
+        payload = {
+            "event": "call_analyzed",
+            "call": {
+                "call_id": "retell-real-001",
+                "transcript": "Agent: hello\nUser: my AC is not turning on",
+                "call_analysis": {
+                    "custom_analysis_data": {
+                        "caller_name": "Beef",
+                        "caller_phone": 5101234567,
+                        "urgency": "emergency",
+                        "service_needed": "AC repair",
+                        "is_lead": True,
+                        "service_address": "123 Main Street, Katy, TX 77493",
+                        "Issue_description": "AC is not turning on at all",
+                    },
+                },
+            },
+        }
+        body = json.dumps(payload).encode()
+        resp = client.post(
+            "/webhook/retell",
+            content=body,
+            headers={"x-retell-signature": "sig"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        job = db.get_job(conn, data["job_id"])
+        assert job["customer_name"] == "Beef"
+        assert job["phone"] == "+15101234567"
+        assert job["address"] == "123 Main Street, Katy, TX 77493"
+        assert job["service_type"] == "AC repair"
+        assert job["issue_description"] == "AC is not turning on at all"
+        assert job["priority"] == "emergency"
+        mock_dispatch.assert_called_once()
+
+    @patch("main.slack_module.send_slack_message")
+    @patch("main.dispatch.start_dispatch")
+    @patch("main.sms.validate_retell_signature", return_value=True)
+    def test_ignores_call_ended_before_analysis(self, mock_validate, mock_dispatch, mock_slack, client):
+        payload = {
+            "event": "call_ended",
+            "call": {
+                "call_id": "retell-ended-001",
+                "call_status": "ended",
+                "transcript": "Agent: hello\nUser: I need AC service",
+            },
+        }
+        body = json.dumps(payload).encode()
+        resp = client.post(
+            "/webhook/retell",
+            content=body,
+            headers={"x-retell-signature": "sig"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ignored"
+        mock_dispatch.assert_not_called()
+        mock_slack.assert_not_called()
+
+    @patch("main.dispatch.start_dispatch")
+    @patch("main.sms.validate_retell_signature", return_value=True)
+    def test_top_level_retell_call_analysis_format(self, mock_validate, mock_dispatch, client):
+        payload = {
+            "event_type": "call_analyzed",
+            "call_id": "retell-top-level-001",
+            "call_analysis": {
+                "custom_analysis_data": {
+                    "caller_name": "Top Level",
+                    "caller_phone": "5101234567",
+                    "service_address": "456 Top St",
+                    "service_needed": "Heating",
+                    "issue_description": "No heat",
+                },
+            },
+        }
+        body = json.dumps(payload).encode()
+        resp = client.post(
+            "/webhook/retell",
+            content=body,
+            headers={"x-retell-signature": "sig"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        mock_dispatch.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # /webhook/twilio
