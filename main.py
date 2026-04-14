@@ -77,9 +77,9 @@ TWIML_EMPTY = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 SKIP_SIGNATURE_VALIDATION = os.getenv("SKIP_SIGNATURE_VALIDATION", "").lower() in ("true", "1", "yes")
 
 
-def _has_valid_retell_webhook_token(request: Request) -> bool:
+def _has_valid_retell_webhook_token(request: Request, path_token: str = "") -> bool:
     configured_token = config.RETELL_WEBHOOK_TOKEN
-    supplied_token = request.query_params.get("token", "")
+    supplied_token = path_token or request.query_params.get("token", "")
     return bool(
         configured_token
         and supplied_token
@@ -93,13 +93,14 @@ async def health():
 
 
 @app.post("/webhook/retell")
-async def webhook_retell(request: Request):
+@app.post("/webhook/retell/{webhook_token}")
+async def webhook_retell(request: Request, webhook_token: str = ""):
     body_bytes = await request.body()
     signature = request.headers.get("x-retell-signature", "")
 
     if not SKIP_SIGNATURE_VALIDATION:
         if not sms.validate_retell_signature(body_bytes, signature, config.RETELL_API_KEY):
-            if _has_valid_retell_webhook_token(request):
+            if _has_valid_retell_webhook_token(request, webhook_token):
                 logger.info("Retell webhook accepted by token fallback")
             else:
                 _valid, signature_info = sms.validate_retell_signature_with_reason(
@@ -114,7 +115,9 @@ async def webhook_retell(request: Request):
                 ]
                 signature_info["content_type"] = request.headers.get("content-type", "")
                 signature_info["token_fallback_configured"] = bool(config.RETELL_WEBHOOK_TOKEN)
-                signature_info["token_fallback_present"] = bool(request.query_params.get("token", ""))
+                signature_info["token_fallback_present"] = bool(
+                    webhook_token or request.query_params.get("token", "")
+                )
                 logger.warning(
                     "Invalid Retell signature: %s",
                     json.dumps(signature_info, sort_keys=True),
