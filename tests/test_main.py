@@ -8,6 +8,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from twilio.request_validator import RequestValidator
 
 
 @pytest.fixture(autouse=True)
@@ -355,6 +356,32 @@ class TestTwilioWebhook:
         call_args = mock_process.call_args
         assert call_args[0][2] == "Jose"  # contractor_name
         assert call_args[0][3] == "yes 2pm"  # body
+
+    @patch("main.dispatch.process_contractor_reply")
+    def test_contractor_reply_validates_https_proxy_url(self, mock_process, client, conn, db):
+        job = db.create_job(
+            conn, "Customer A", "+15551234567", "100 Main St",
+            service_type="AC", issue_description="Broken",
+        )
+        db.update_job(conn, job["id"], status="contacting_contractor", current_contractor="Jose")
+
+        params = {"From": "+15550001111", "Body": "yes 2pm", "MessageSid": "SM101"}
+        signature = RequestValidator("test-twilio-token").compute_signature(
+            "https://testserver/webhook/twilio",
+            params,
+        )
+
+        resp = client.post(
+            "/webhook/twilio",
+            data=params,
+            headers={
+                "x-twilio-signature": signature,
+                "x-forwarded-proto": "https",
+            },
+        )
+
+        assert resp.status_code == 200
+        mock_process.assert_called_once()
 
     @patch("main.sms.validate_twilio_signature", return_value=True)
     def test_contractor_reply_no_active_job(self, mock_validate, client):

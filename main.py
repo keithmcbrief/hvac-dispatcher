@@ -171,6 +171,37 @@ def _extract_from_sources(sources: tuple[dict, ...], *fields, default=""):
     return default
 
 
+def _twilio_signature_url_candidates(request: Request) -> list[str]:
+    url = str(request.url)
+    candidates = [url]
+
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    forwarded_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+    host = forwarded_host or request.headers.get("host", "")
+    path = request.url.path
+    query = f"?{request.url.query}" if request.url.query else ""
+
+    for scheme in (forwarded_proto, "https"):
+        if scheme and host:
+            candidates.append(f"{scheme}://{host}{path}{query}")
+
+    if url.startswith("http://"):
+        candidates.append(f"https://{url[len('http://'):]}")
+
+    unique_candidates = []
+    for candidate in candidates:
+        if candidate not in unique_candidates:
+            unique_candidates.append(candidate)
+    return unique_candidates
+
+
+def _validate_twilio_request_signature(request: Request, params: dict, signature: str) -> bool:
+    return any(
+        sms.validate_twilio_signature(url, params, signature)
+        for url in _twilio_signature_url_candidates(request)
+    )
+
+
 @app.get("/health")
 async def health():
     return {"status": "healthy", "version": "1.0.0"}
@@ -310,14 +341,41 @@ async def webhook_twilio(request: Request):
     params = dict(form_data)
 
     signature = request.headers.get("x-twilio-signature", "")
-    request_url = str(request.url)
 
-    if not SKIP_SIGNATURE_VALIDATION and not sms.validate_twilio_signature(request_url, params, signature):
+    if not SKIP_SIGNATURE_VALIDATION and not _validate_twilio_request_signature(request, params, signature):
+        logger.warning(
+            "Invalid Twilio signature: %s",
+            json.dumps(
+                {
+                    "signature_present": bool(signature),
+                    "signature_len": len(signature or ""),
+                    "url_candidates": _twilio_signature_url_candidates(request),
+                    "param_keys": sorted(params.keys()),
+                    "forwarded_proto": request.headers.get("x-forwarded-proto", ""),
+                    "forwarded_host_present": bool(request.headers.get("x-forwarded-host", "")),
+                    "host": request.headers.get("host", ""),
+                },
+                sort_keys=True,
+            ),
+        )
         return Response(content=TWIML_EMPTY, media_type="text/xml", status_code=403)
 
     from_number = params.get("From", "")
     body = params.get("Body", "")
     message_sid = params.get("MessageSid", "")
+    logger.info(
+        "Twilio webhook accepted: %s",
+        json.dumps(
+            {
+                "from_last4": from_number[-4:],
+                "body_len": len(body),
+                "message_sid_present": bool(message_sid),
+                "known_contractor": from_number in config.CONTRACTOR_PHONES,
+                "is_eddie": from_number == config.EDDIE_PHONE,
+            },
+            sort_keys=True,
+        ),
+    )
 
     conn = db_module.get_connection()
     try:
