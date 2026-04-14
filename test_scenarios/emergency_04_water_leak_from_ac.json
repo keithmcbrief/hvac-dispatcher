@@ -1,0 +1,15 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "emergency_04",
+    "from_number": "+12145551004",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "James Robinson",
+      "phone": "+12145551004",
+      "address": "1550 Mockingbird Ln, Dallas TX 75235",
+      "service_type": "AC Emergency",
+      "issue_description": "AC unit leaking water badly, dripping through ceiling into living room, damaging floors",
+      "priority": "emergency"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "emergency_02",
+    "from_number": "+12145551002",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "David Chen",
+      "phone": "+12145551002",
+      "address": "8903 Greenville Ave, Dallas TX 75243",
+      "service_type": "Gas Furnace Emergency",
+      "issue_description": "Smells gas near the furnace, turned everything off, family evacuated to garage",
+      "priority": "emergency"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "spam_02",
+    "from_number": "+12145559876",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "Someone",
+      "address": "",
+      "service_type": "",
+      "issue_description": "Caller was looking for a pizza place, wrong number"
+    }
+  }
+}

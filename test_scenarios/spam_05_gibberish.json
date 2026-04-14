@@ -1,0 +1,13 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "spam_05",
+    "from_number": "+12145553333",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "",
+      "address": "",
+      "service_type": "",
+      "issue_description": "Caller spoke in another language, could not understand request"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+.env
+.git
+.pytest_cache/
+__pycache__/
+*.pyc
+
+dispatch.db
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+tests/
+test_scenarios/
+webhook_logs/

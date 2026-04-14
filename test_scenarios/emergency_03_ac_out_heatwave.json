@@ -1,0 +1,15 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "emergency_03",
+    "from_number": "+12145551003",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "Patricia Williams",
+      "phone": "+12145551003",
+      "address": "2200 McKinney Ave Apt 14B, Dallas TX 75201",
+      "service_type": "AC Emergency",
+      "issue_description": "AC completely dead during heat advisory, indoor temp over 100, has medical condition",
+      "priority": "emergency"
+    }
+  }
+}

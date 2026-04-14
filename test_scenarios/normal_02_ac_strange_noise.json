@@ -1,0 +1,14 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "normal_02",
+    "from_number": "+12145552002",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "Michael Thompson",
+      "phone": "+12145552002",
+      "address": "901 Buckner Blvd, Dallas TX 75218",
+      "service_type": "AC Repair",
+      "issue_description": "AC making a grinding noise when it kicks on, still cooling but sounds bad"
+    }
+  }
+}

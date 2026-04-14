@@ -1,0 +1,14 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "normal_05",
+    "from_number": "+12145552005",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "Karen Wilson",
+      "phone": "+12145552005",
+      "address": "1200 Elm St Suite 300, Dallas TX 75270",
+      "service_type": "AC Maintenance",
+      "issue_description": "Wants annual AC tune-up and filter change before summer, no current issues"
+    }
+  }
+}

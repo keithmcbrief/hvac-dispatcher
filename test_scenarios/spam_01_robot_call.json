@@ -1,0 +1,13 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "spam_01",
+    "from_number": "+18005551234",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "",
+      "address": "",
+      "service_type": "",
+      "issue_description": "Caller was a robocall about extended car warranty"
+    }
+  }
+}

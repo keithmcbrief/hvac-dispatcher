@@ -1,0 +1,14 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "normal_04",
+    "from_number": "+12145552004",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "Robert Davis",
+      "phone": "+12145552004",
+      "address": "7700 Forest Ln Apt 210, Dallas TX 75230",
+      "service_type": "AC Repair",
+      "issue_description": "Ice forming on the outside AC unit, coils are frozen solid, turned it off for now"
+    }
+  }
+}

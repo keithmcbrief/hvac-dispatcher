@@ -1,0 +1,15 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "emergency_01",
+    "from_number": "+12145551001",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "Rosa Martinez",
+      "phone": "+12145551001",
+      "address": "4521 Cedar Springs Rd, Dallas TX 75219",
+      "service_type": "Heating Emergency",
+      "issue_description": "No heat at all, house is 45 degrees, elderly person and infant in the home",
+      "priority": "emergency"
+    }
+  }
+}

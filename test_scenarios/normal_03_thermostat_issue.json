@@ -1,0 +1,14 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "normal_03",
+    "from_number": "+12145552003",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "Linda Garcia",
+      "phone": "+12145552003",
+      "address": "3345 Gaston Ave, Dallas TX 75246",
+      "service_type": "Thermostat Service",
+      "issue_description": "Thermostat display is blank, AC won't turn on, tried changing batteries already"
+    }
+  }
+}

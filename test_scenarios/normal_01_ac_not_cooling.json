@@ -1,0 +1,14 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "normal_01",
+    "from_number": "+12145552001",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "Sarah Johnson",
+      "phone": "+12145552001",
+      "address": "5678 Lovers Ln, Dallas TX 75209",
+      "service_type": "AC Repair",
+      "issue_description": "AC running but not cooling, house stays around 80 degrees"
+    }
+  }
+}

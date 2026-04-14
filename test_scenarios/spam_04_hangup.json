@@ -1,0 +1,13 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "spam_04",
+    "from_number": "+12145550000",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "",
+      "address": "",
+      "service_type": "",
+      "issue_description": "Caller hung up immediately, no conversation"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "spam_03",
+    "from_number": "+18009997777",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "Mike from Solar Solutions",
+      "address": "",
+      "service_type": "",
+      "issue_description": "Solicitor trying to sell solar panel installation services"
+    }
+  }
+}

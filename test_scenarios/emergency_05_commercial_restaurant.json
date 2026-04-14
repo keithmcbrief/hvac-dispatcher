@@ -1,0 +1,15 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "emergency_05",
+    "from_number": "+12145551005",
+    "retell_llm_dynamic_variables": {
+      "customer_name": "Tony Nguyen",
+      "phone": "+12145551005",
+      "address": "3100 Main St, Dallas TX 75226",
+      "service_type": "Commercial AC Emergency",
+      "issue_description": "Restaurant walk-in cooler and AC both down, losing thousands in food, customers leaving",
+      "priority": "emergency"
+    }
+  }
+}

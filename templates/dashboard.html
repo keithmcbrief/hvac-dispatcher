@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eddie HVAC Dispatch</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #1a1a1a; color: #fff; padding: 16px; }
+    h1 { font-size: 1.3rem; margin-bottom: 12px; color: #fff; }
+
+    /* Top bar */
+    .top-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; padding: 10px 14px; background: #2a2a2a; border-radius: 10px; }
+    .top-bar select { padding: 6px 8px; border: 1px solid #444; border-radius: 6px; font-size: 0.85rem; background: #333; color: #fff; min-width: 200px; }
+    .top-bar button { padding: 6px 14px; border: none; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+    .btn-fire { background: #0a84ff; color: #fff; }
+    .btn-fire:hover { background: #0070e0; }
+    .btn-clear { background: #ff3b30; color: #fff; }
+    .btn-clear:hover { background: #d63029; }
+    .top-status { font-size: 0.85rem; color: #999; }
+
+    /* Stats */
+    .stats { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+    .stat { background: #2a2a2a; border-radius: 8px; padding: 8px 14px; font-size: 0.85rem; color: #999; }
+    .stat strong { color: #fff; font-size: 1.2rem; display: block; }
+
+    /* Phone grid */
+    .phones { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    @media (max-width: 1200px) { .phones { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px) { .phones { grid-template-columns: 1fr; } }
+
+    /* Individual phone */
+    .phone { background: #2a2a2a; border-radius: 14px; display: flex; flex-direction: column; height: 520px; overflow: hidden; }
+    .phone-header { padding: 10px 14px; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 8px; }
+    .phone-avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem; color: #fff; flex-shrink: 0; }
+    .phone-name { font-weight: 600; font-size: 0.95rem; }
+    .phone-role { font-size: 0.75rem; color: #888; }
+    .phone-status { margin-left: auto; font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+
+    /* Message area */
+    .phone-messages { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+    .phone-messages::-webkit-scrollbar { width: 4px; }
+    .phone-messages::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+    .phone-empty { color: #666; font-size: 0.85rem; text-align: center; margin-top: 40px; }
+
+    /* Message bubbles - iMessage style */
+    .bubble { max-width: 85%; padding: 8px 12px; border-radius: 16px; font-size: 0.85rem; line-height: 1.4; word-wrap: break-word; }
+    .bubble-incoming { background: #333; color: #fff; align-self: flex-start; border-bottom-left-radius: 4px; }
+    .bubble-outgoing { background: #0a84ff; color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+    .bubble-job-tag { font-size: 0.7rem; color: #aaa; margin-bottom: 2px; }
+    .bubble-time { font-size: 0.65rem; color: #777; margin-top: 2px; }
+    .bubble-outgoing .bubble-time { text-align: right; }
+
+    /* Input area */
+    .phone-input { padding: 8px 10px; border-top: 1px solid #333; display: flex; gap: 6px; align-items: center; }
+    .phone-input input { flex: 1; padding: 8px 12px; border: 1px solid #444; border-radius: 18px; font-size: 0.85rem; background: #333; color: #fff; outline: none; }
+    .phone-input input::placeholder { color: #666; }
+    .phone-input input:focus { border-color: #0a84ff; }
+    .phone-input button { width: 32px; height: 32px; border-radius: 50%; border: none; background: #0a84ff; color: #fff; font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .phone-input button:hover { background: #0070e0; }
+
+    /* Eddie's phone - special commands */
+    .eddie-commands { display: flex; gap: 4px; padding: 6px 10px; border-top: 1px solid #333; flex-wrap: wrap; }
+    .eddie-cmd { padding: 4px 10px; border-radius: 14px; border: 1px solid #444; background: transparent; color: #999; font-size: 0.75rem; cursor: pointer; font-weight: 600; }
+    .eddie-cmd:hover { background: #333; color: #fff; }
+
+    /* Jobs table (compact) */
+    .jobs-section { margin-top: 16px; }
+    .jobs-section h2 { font-size: 1rem; margin-bottom: 8px; color: #ccc; }
+    .jobs-table { width: 100%; border-collapse: collapse; background: #2a2a2a; border-radius: 8px; overflow: hidden; font-size: 0.8rem; }
+    .jobs-table th { background: #333; color: #999; text-align: left; padding: 6px 10px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; }
+    .jobs-table td { padding: 6px 10px; border-bottom: 1px solid #333; color: #ccc; }
+    .jobs-table tr:last-child td { border-bottom: none; }
+    .status-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+    .sb-active { background: #ff9500; color: #fff; }
+    .sb-confirmed { background: #30d158; color: #fff; }
+    .sb-done { background: #555; color: #aaa; }
+    .sb-failed { background: #ff3b30; color: #fff; }
+  </style>
+</head>
+<body>
+  <h1>Eddie HVAC Dispatch</h1>
+
+  <div class="top-bar" id="top-bar">
+    <select id="scenario-select"><option value="">Loading...</option></select>
+    <button class="btn-fire" onclick="fireScenario()">Fire Scenario</button>
+    <button class="btn-clear" onclick="clearDB()">Clear All</button>
+    <span class="top-status" id="top-status"></span>
+  </div>
+
+  {% set active_count = jobs | selectattr("status", "in", ["new", "contacting_contractor", "awaiting_reply", "follow_up_1", "follow_up_2", "escalating", "conditional_pending"]) | list | length %}
+  {% set confirmed_count = jobs | selectattr("status", "equalto", "contractor_confirmed") | list | length %}
+
+  <div class="stats">
+    <div class="stat"><strong>{{ active_count }}</strong> Active</div>
+    <div class="stat"><strong>{{ confirmed_count }}</strong> Confirmed</div>
+    <div class="stat"><strong>{{ jobs | length }}</strong> Total</div>
+  </div>
+
+  <div class="phones">
+    <!-- Jose -->
+    <div class="phone" id="phone-Jose">
+      <div class="phone-header">
+        <div class="phone-avatar" style="background:#ff9500;">J</div>
+        <div>
+          <div class="phone-name">Jose</div>
+          <div class="phone-role">Priority 1</div>
+        </div>
+        <div class="phone-status" id="status-Jose" style="background:#333;color:#888;">idle</div>
+      </div>
+      <div class="phone-messages" id="msgs-Jose">
+        <div class="phone-empty">No messages yet</div>
+      </div>
+      <div class="phone-input">
+        <input type="text" id="input-Jose" placeholder="Reply as Jose..." onkeydown="if(event.key==='Enter')sendAs('Jose')">
+        <button onclick="sendAs('Jose')">&#x2191;</button>
+      </div>
+    </div>
+
+    <!-- Mario -->
+    <div class="phone" id="phone-Mario">
+      <div class="phone-header">
+        <div class="phone-avatar" style="background:#30d158;">M</div>
+        <div>
+          <div class="phone-name">Mario</div>
+          <div class="phone-role">Priority 2</div>
+        </div>
+        <div class="phone-status" id="status-Mario" style="background:#333;color:#888;">idle</div>
+      </div>
+      <div class="phone-messages" id="msgs-Mario">
+        <div class="phone-empty">No messages yet</div>
+      </div>
+      <div class="phone-input">
+        <input type="text" id="input-Mario" placeholder="Reply as Mario..." onkeydown="if(event.key==='Enter')sendAs('Mario')">
+        <button onclick="sendAs('Mario')">&#x2191;</button>
+      </div>
+    </div>
+
+    <!-- Raul -->
+    <div class="phone" id="phone-Raul">
+      <div class="phone-header">
+        <div class="phone-avatar" style="background:#5856d6;">R</div>
+        <div>
+          <div class="phone-name">Raul</div>
+          <div class="phone-role">Priority 3</div>
+        </div>
+        <div class="phone-status" id="status-Raul" style="background:#333;color:#888;">idle</div>
+      </div>
+      <div class="phone-messages" id="msgs-Raul">
+        <div class="phone-empty">No messages yet</div>
+      </div>
+      <div class="phone-input">
+        <input type="text" id="input-Raul" placeholder="Reply as Raul..." onkeydown="if(event.key==='Enter')sendAs('Raul')">
+        <button onclick="sendAs('Raul')">&#x2191;</button>
+      </div>
+    </div>
+
+    <!-- Eddie -->
+    <div class="phone" id="phone-Eddie">
+      <div class="phone-header">
+        <div class="phone-avatar" style="background:#ff3b30;">E</div>
+        <div>
+          <div class="phone-name">Eddie</div>
+          <div class="phone-role">Owner</div>
+        </div>
+        <div class="phone-status" id="status-Eddie" style="background:#333;color:#888;">monitoring</div>
+      </div>
+      <div class="phone-messages" id="msgs-Eddie">
+        <div class="phone-empty">No notifications yet</div>
+      </div>
+      <div class="eddie-commands">
+        <button class="eddie-cmd" onclick="eddieCmd('OK')">OK</button>
+        <button class="eddie-cmd" onclick="eddieCmd('NEXT')">NEXT</button>
+        <button class="eddie-cmd" onclick="eddieCmd('URGENT')">URGENT</button>
+        <button class="eddie-cmd" onclick="eddieCmd('CANCEL')">CANCEL</button>
+      </div>
+      <div class="phone-input">
+        <input type="text" id="input-Eddie" placeholder="Eddie command..." onkeydown="if(event.key==='Enter')eddieType()">
+        <button onclick="eddieType()">&#x2191;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Compact jobs table -->
+  <div class="jobs-section">
+    <h2>Jobs</h2>
+    {% if jobs %}
+    <table class="jobs-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Customer</th>
+          <th>Address</th>
+          <th>Service</th>
+          <th>Priority</th>
+          <th>Status</th>
+          <th>Contractor</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td>{{ job["id"] }}</td>
+          <td>{{ job["customer_name"] }}</td>
+          <td>{{ job["address"] }}</td>
+          <td>{{ job["service_type"] or "-" }}</td>
+          <td>{% if job["priority"] == "emergency" %}<span style="color:#ff3b30;font-weight:700;">emergency</span>{% else %}normal{% endif %}</td>
+          <td>
+            {% set s = job["status"] %}
+            {% if s in ["contacting_contractor", "awaiting_reply", "follow_up_1", "follow_up_2", "escalating", "conditional_pending", "new"] %}
+              <span class="status-badge sb-active">{{ s | replace("_", " ") }}</span>
+            {% elif s == "contractor_confirmed" %}
+              <span class="status-badge sb-confirmed">confirmed</span>
+            {% elif s in ["completed"] %}
+              <span class="status-badge sb-done">{{ s }}</span>
+            {% else %}
+              <span class="status-badge sb-failed">{{ s | replace("_", " ") }}</span>
+            {% endif %}
+          </td>
+          <td>{{ job["current_contractor"] or "-" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div style="color:#666; text-align:center; padding:20px;">No jobs yet. Fire a scenario above.</div>
+    {% endif %}
+  </div>
+
+  <script>
+    var SLUG = "{{ slug }}";
+    var POLL_MS = 3000;
+    var _pollTimer = null;
+
+    // Load scenarios
+    fetch("/test/scenarios")
+      .then(function(r) { return r.ok ? r.json() : []; })
+      .then(function(scenarios) {
+        var sel = document.getElementById("scenario-select");
+        if (!scenarios.length) { sel.innerHTML = '<option value="">No scenarios</option>'; return; }
+        sel.innerHTML = scenarios.map(function(s) {
+          return '<option value="' + s + '">' + s.replace(/_/g, ' ') + '</option>';
+        }).join('');
+      })
+      .catch(function() {});
+
+    function fireScenario() {
+      var sel = document.getElementById("scenario-select");
+      var st = document.getElementById("top-status");
+      if (!sel.value) return;
+      st.textContent = "Firing...";
+      fetch("/test/scenario/" + sel.value, {method: "POST"})
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          st.textContent = d.status === "ok" ? "Job #" + d.job_id + " created" : d.reason || d.status;
+          refreshAll();
+        })
+        .catch(function() { st.textContent = "Failed"; });
+    }
+
+    function clearDB() {
+      if (!confirm("Clear all jobs and messages?")) return;
+      fetch("/test/clear", {method: "POST"})
+        .then(function() { location.reload(); })
+        .catch(function() {});
+    }
+
+    function sendAs(name) {
+      var input = document.getElementById("input-" + name);
+      var text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      fetch("/test/reply", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({contractor: name, body: text})
+      })
+      .then(function(r) { return r.json(); })
+      .then(function() { refreshAll(); })
+      .catch(function() {});
+    }
+
+    function eddieCmd(cmd) {
+      fetch("/test/eddie", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({command: cmd})
+      })
+      .then(function(r) { return r.json(); })
+      .then(function() { refreshAll(); })
+      .catch(function() {});
+    }
+
+    function eddieType() {
+      var input = document.getElementById("input-Eddie");
+      var text = input.value.trim().toUpperCase();
+      if (!text) return;
+      input.value = "";
+      if (["OK","NEXT","URGENT","CANCEL"].indexOf(text) >= 0) {
+        eddieCmd(text);
+      }
+    }
+
+    function escapeHtml(t) {
+      var d = document.createElement("div");
+      d.textContent = t;
+      return d.innerHTML;
+    }
+
+    function renderMessages(allMsgs) {
+      var byPerson = {Jose: [], Mario: [], Raul: [], Eddie: []};
+
+      allMsgs.forEach(function(m) {
+        var cn = m.contractor_name;
+        if (cn === "Eddie") {
+          // Eddie notification: outbound to Eddie = incoming on Eddie's phone
+          byPerson.Eddie.push(m);
+        } else if (cn && byPerson[cn] !== undefined) {
+          byPerson[cn].push(m);
+        }
+      });
+
+      ["Jose", "Mario", "Raul"].forEach(function(name) {
+        var container = document.getElementById("msgs-" + name);
+        var msgs = byPerson[name];
+        if (!msgs.length) {
+          container.innerHTML = '<div class="phone-empty">No messages yet</div>';
+          return;
+        }
+        var html = "";
+        msgs.forEach(function(m) {
+          // outbound from system = incoming on contractor's phone
+          // inbound from contractor = outgoing on contractor's phone (they sent it)
+          var isTheirs = m.direction === "inbound";
+          var cls = isTheirs ? "bubble-outgoing" : "bubble-incoming";
+          var jobTag = "Job #" + m.job_id + (m.customer_name ? " - " + m.customer_name : "");
+          html += '<div class="bubble ' + cls + '">';
+          html += '<div class="bubble-job-tag">' + escapeHtml(jobTag) + '</div>';
+          html += escapeHtml(m.body);
+          if (m.timestamp) html += '<div class="bubble-time">' + m.timestamp + '</div>';
+          html += '</div>';
+        });
+        container.innerHTML = html;
+        container.scrollTop = container.scrollHeight;
+
+        // Update status
+        var statusEl = document.getElementById("status-" + name);
+        var lastMsg = msgs[msgs.length - 1];
+        if (lastMsg.job_status === "contractor_confirmed" && lastMsg.direction === "inbound") {
+          statusEl.textContent = "confirmed";
+          statusEl.style.background = "#30d158"; statusEl.style.color = "#fff";
+        } else if (msgs.some(function(m2) { return m2.direction === "outbound"; })) {
+          statusEl.textContent = "active";
+          statusEl.style.background = "#ff9500"; statusEl.style.color = "#fff";
+        }
+      });
+
+      // Eddie
+      var eddieContainer = document.getElementById("msgs-Eddie");
+      var eddiemsgs = byPerson.Eddie;
+      if (!eddiemsgs.length) {
+        eddieContainer.innerHTML = '<div class="phone-empty">No notifications yet</div>';
+        return;
+      }
+      var ehtml = "";
+      eddiemsgs.forEach(function(m) {
+        ehtml += '<div class="bubble bubble-incoming">';
+        ehtml += '<div class="bubble-job-tag">Job #' + m.job_id + '</div>';
+        ehtml += escapeHtml(m.body);
+        if (m.timestamp) ehtml += '<div class="bubble-time">' + m.timestamp + '</div>';
+        ehtml += '</div>';
+      });
+      eddieContainer.innerHTML = ehtml;
+      eddieContainer.scrollTop = eddieContainer.scrollHeight;
+    }
+
+    function refreshAll() {
+      fetch("/dash/" + SLUG + "/all-messages")
+        .then(function(r) { return r.json(); })
+        .then(function(msgs) { renderMessages(msgs); })
+        .catch(function() {});
+    }
+
+    // Initial load + auto-refresh
+    refreshAll();
+    _pollTimer = setInterval(refreshAll, POLL_MS);
+  </script>
+</body>
+</html>
