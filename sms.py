@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import json
 import logging
 import time
 
@@ -145,22 +146,42 @@ def validate_retell_signature_with_reason(payload_bytes: bytes, signature: str, 
             return False, info
 
         body_text = payload_bytes.decode("utf-8")
-        expected = hmac.new(
-            api_key.encode("utf-8"),
-            f"{body_text}{timestamp}".encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-        valid = hmac.compare_digest(expected, digest)
-        info["matched_scheme"] = "body_timestamp" if valid else ""
+        candidate_bodies = [("raw_body", body_text)]
+        try:
+            compact_json = json.dumps(
+                json.loads(body_text),
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            if compact_json != body_text:
+                candidate_bodies.append(("compact_json", compact_json))
+        except json.JSONDecodeError:
+            pass
 
-        if not valid:
-            timestamp_first_expected = hmac.new(
+        valid = False
+        info["matched_scheme"] = ""
+        for body_name, candidate_body in candidate_bodies:
+            expected = hmac.new(
                 api_key.encode("utf-8"),
-                f"{timestamp}{body_text}".encode("utf-8"),
+                f"{candidate_body}{timestamp}".encode("utf-8"),
                 hashlib.sha256,
             ).hexdigest()
-            valid = hmac.compare_digest(timestamp_first_expected, digest)
-            info["matched_scheme"] = "timestamp_body" if valid else ""
+            valid = hmac.compare_digest(expected, digest)
+            if valid:
+                info["matched_scheme"] = f"{body_name}_timestamp"
+                break
+
+        if not valid:
+            for body_name, candidate_body in candidate_bodies:
+                timestamp_first_expected = hmac.new(
+                    api_key.encode("utf-8"),
+                    f"{timestamp}{candidate_body}".encode("utf-8"),
+                    hashlib.sha256,
+                ).hexdigest()
+                valid = hmac.compare_digest(timestamp_first_expected, digest)
+                if valid:
+                    info["matched_scheme"] = f"timestamp_{body_name}"
+                    break
 
         info["reason"] = "ok" if valid else "digest_mismatch"
         return valid, info

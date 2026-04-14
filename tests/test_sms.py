@@ -207,3 +207,18 @@ class TestValidateRetellSignature:
         sig = hmac.new(api_key.encode(), payload, hashlib.sha256).hexdigest()
 
         assert sms.validate_retell_signature(payload, sig, api_key) is True
+
+    def test_compact_json_signature(self, _reset_sms, monkeypatch):
+        sms = _reset_sms
+        api_key = "secret"
+        payload = b'{\n  "event": "call_ended",\n  "call": {"id": "abc"}\n}'
+        compact_payload = b'{"event":"call_ended","call":{"id":"abc"}}'
+        monkeypatch.setattr(sms.time, "time", lambda: 1_700_000_000)
+        timestamp = "1700000000000"
+        digest = hmac.new(
+            api_key.encode(),
+            compact_payload + timestamp.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+
+        assert sms.validate_retell_signature(payload, f"v={timestamp},d={digest}", api_key) is True
