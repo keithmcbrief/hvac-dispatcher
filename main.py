@@ -296,6 +296,7 @@ async def webhook_retell(request: Request, webhook_token: str = ""):
         logger.info("Skipping non-lead/spam call: %s", retell_call_id)
         reason = "no address provided" if not address else "not a lead"
         recording_line = f"\n🔊 Recording: {recording_url}" if recording_url else ""
+        transcript_block = slack_module.format_transcript_for_slack(transcript)
         slack_module.send_slack_message(
             f"⚠️ Call received but NOT dispatched ({reason})\n\n"
             f"Customer: {customer_name or 'Unknown'} ({phone or 'no phone'})\n"
@@ -303,6 +304,7 @@ async def webhook_retell(request: Request, webhook_token: str = ""):
             f"Issue: {issue_description or 'N/A'}\n"
             f"Address: {address or 'NOT PROVIDED'}"
             f"{recording_line}"
+            f"{transcript_block}"
         )
         return {"status": "skipped", "reason": reason}
 

@@ -11,6 +11,22 @@ import config
 
 logger = logging.getLogger(__name__)
 
+MAX_TRANSCRIPT_CHARS = 30_000
+
+
+def format_transcript_for_slack(transcript: str, max_chars: int = MAX_TRANSCRIPT_CHARS) -> str:
+    """Return a Slack-safe transcript block for appending to notifications."""
+    transcript = (transcript or "").strip()
+    if not transcript:
+        return ""
+
+    transcript = transcript.replace("```", "'''")
+    if len(transcript) > max_chars:
+        transcript = transcript[:max_chars].rstrip()
+        transcript = f"{transcript}\n[Transcript truncated in Slack.]"
+
+    return f"\n\nFull transcript:\n```{transcript}```"
+
 
 def send_slack_message(text: str) -> None:
     """Post a message to the Eddie dispatch Slack channel via Incoming Webhook."""

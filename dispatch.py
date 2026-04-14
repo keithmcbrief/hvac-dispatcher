@@ -113,6 +113,11 @@ def start_dispatch(conn, job_id):
     # Notify Eddie about the new incoming job
     priority_label = "🚨 EMERGENCY" if job["priority"] == "emergency" else "📞 New call"
     recording_line = f"\n🔊 Recording: {job['recording_url']}" if job["recording_url"] else ""
+    transcript_block = ""
+    if config.SLACK_ENABLED:
+        import slack as slack_module
+        transcript_block = slack_module.format_transcript_for_slack(job["transcript"])
+
     _notify_eddie(
         conn, job_id,
         f"{priority_label}\n\n"
@@ -120,7 +125,8 @@ def start_dispatch(conn, job_id):
         f"Customer: {job['customer_name']} ({job['phone']})\n"
         f"Address: {job['address']}\n"
         f"Issue: {job['issue_description'] or 'N/A'}"
-        f"{recording_line}\n\n"
+        f"{recording_line}"
+        f"{transcript_block}\n\n"
         f"Contacting contractors now."
     )
 

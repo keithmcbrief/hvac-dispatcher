@@ -65,6 +65,27 @@ def _create_test_job(db, conn, priority="normal"):
     )
 
 
+def test_start_dispatch_slack_notification_includes_transcript(dispatch_module, db, conn):
+    dispatch_module.config.SLACK_ENABLED = True
+    job = db.create_job(
+        conn,
+        customer_name="John Smith",
+        phone="+15551234567",
+        address="123 Main St",
+        service_type="AC repair",
+        issue_description="No cold air",
+        transcript="Agent: Hi\nUser: My AC is broken",
+    )
+
+    with patch("slack.send_slack_message") as mock_slack, patch("dispatch.sms") as mock_sms:
+        mock_sms.send_sms.return_value = "SM_TEST_SID"
+        dispatch_module.start_dispatch(conn, job["id"])
+
+    slack_text = mock_slack.call_args[0][0]
+    assert "Full transcript:" in slack_text
+    assert "Agent: Hi\nUser: My AC is broken" in slack_text
+
+
 # ---------------------------------------------------------------------------
 # start_dispatch — normal priority
 # ---------------------------------------------------------------------------
