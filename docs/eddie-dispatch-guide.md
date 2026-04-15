@@ -43,12 +43,13 @@ A normal job is a standard service request that is not marked urgent or emergenc
 2. Retell sends the analyzed call data to the dispatch app.
 3. Eddie gets a Slack message with the job details and full transcript.
 4. Jose gets the first contractor text.
-5. If Jose accepts, the job is confirmed with Jose and Eddie gets a Slack confirmation.
-6. If Jose declines, the job moves to Mario immediately.
-7. If Jose does not reply, the system follows up with Jose.
-8. If Jose still does not reply after all attempts, the job moves to Mario.
-9. The same process repeats for Mario, then Raul.
-10. If nobody accepts, Eddie gets a Slack alert that no contractor is available and the job needs manual handling.
+5. If Jose accepts with an ETA, the job is confirmed with Jose, the customer gets a confirmation text, and Eddie gets a Slack confirmation.
+6. If Jose accepts without an ETA, the system asks Jose for an ETA and does not text the customer yet.
+7. If Jose declines, the job moves to Mario immediately.
+8. If Jose does not reply, the system follows up with Jose.
+9. If Jose still does not reply after all attempts, the job moves to Mario.
+10. The same process repeats for Mario, then Raul.
+11. If nobody accepts, Eddie gets a Slack alert that no contractor is available and the job needs manual handling.
 
 ## Emergency Job Flow
 
@@ -58,10 +59,11 @@ An emergency job is a call marked urgent, emergency, or ASAP by Kristi/Retell.
 2. Retell sends the analyzed call data to the dispatch app.
 3. Eddie gets a Slack message marked emergency with the job details and full transcript.
 4. Jose, Mario, and Raul all get the job text at the same time.
-5. The first contractor to clearly accept gets assigned the job.
-6. Eddie gets a Slack confirmation showing who accepted and the ETA if one was provided.
-7. Any other contractors who were contacted get a follow-up text saying the job has been taken and no action is needed.
-8. If nobody responds after all attempts, Eddie gets a Slack alert that no contractor responded and the job needs manual handling.
+5. The first contractor to clearly accept with an ETA gets assigned the job.
+6. If a contractor accepts without an ETA, the system asks that contractor for an ETA and does not text the customer yet.
+7. Once an ETA is provided, the customer gets a confirmation text and Eddie gets a Slack confirmation.
+8. Any other contractors who were contacted get a follow-up text saying the job has been taken and no action is needed.
+9. If nobody responds after all attempts, Eddie gets a Slack alert that no contractor responded and the job needs manual handling.
 
 ## Timing And Follow-Ups
 
@@ -115,6 +117,30 @@ When an emergency job is taken by another contractor, the remaining contractors 
 Update on Job #12 (AC repair at 123 Main Street, Katy, TX 77493): This job has been taken. No action needed. Thanks!
 ```
 
+If a contractor accepts without an ETA, the contractor receives:
+
+```text
+Thanks. What time can you arrive for Job #12? Please reply with an ETA like "5pm" or "in 45 minutes".
+```
+
+## Customer Text Message
+
+The customer is texted only after a contractor confirms with a usable ETA.
+
+Example:
+
+```text
+Residential AC & Heating: Jose is confirmed for 5pm for your AC repair at 123 Main Street, Katy, TX 77493. Reply here if anything changes.
+```
+
+If the contractor replies that they are already on the way, the customer gets:
+
+```text
+Residential AC & Heating: Jose is on the way for your AC repair at 123 Main Street, Katy, TX 77493. Reply here if anything changes.
+```
+
+If the customer replies, the app does not auto-answer. It relays the exact message to Slack with the job number, customer, address, assigned contractor, and ETA.
+
 ## Expected Contractor Replies
 
 Contractors should reply in plain language by text.
@@ -162,10 +188,18 @@ The system uses simple matching for obvious yes/no replies and AI classification
 
 If a contractor accepts:
 
-- The job is marked confirmed.
+- If the contractor gave an ETA, the job is marked confirmed.
+- The customer gets a confirmation text.
 - Eddie gets a Slack confirmation.
-- The confirmation includes the contractor name and ETA if the contractor gave one.
+- The confirmation includes the contractor name, ETA, and the customer text that was sent.
 - Other already-contacted contractors are told the job has been taken.
+
+If a contractor accepts without an ETA:
+
+- The job waits for that contractor's ETA.
+- The customer is not texted yet.
+- The contractor gets an ETA request text.
+- Eddie gets a Slack alert that the contractor accepted but timing is missing.
 
 If a contractor declines:
 
@@ -196,12 +230,13 @@ Eddie should watch for:
 - No-contractor-available alerts
 - Calls that were skipped because the address was missing or the call was not a lead
 
-Once a contractor confirms, Eddie should contact the customer to finalize the appointment.
+Once a contractor confirms with an ETA, the app sends the initial customer confirmation text. Eddie should still watch Slack for customer replies or questions.
 
 ## Important Notes
 
-- The app does not text the customer directly.
-- The app coordinates contractors only.
+- The app texts the customer only after a contractor provides an ETA.
+- The app does not auto-answer customer replies.
+- Customer replies are relayed to Slack exactly as received.
 - Slack receives full call visibility, including transcripts when Retell provides them.
 - Contractor routing depends on each contractor texting back from the phone number configured for them.
 - If a contractor replies from a different phone number, the system will not recognize them automatically.

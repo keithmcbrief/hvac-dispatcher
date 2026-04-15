@@ -118,6 +118,76 @@ def test_update_job(db, conn):
     assert updated["updated_at"] is not None
 
 
+def test_update_job_allows_accepted_waiting_eta(db, conn):
+    job = db.create_job(conn, "Alice", "+15551234567", "123 Main St")
+    updated = db.update_job(conn, job["id"], status="accepted_waiting_eta")
+    assert updated["status"] == "accepted_waiting_eta"
+
+
+def test_init_migrates_existing_db_for_accepted_waiting_eta(monkeypatch, tmp_path):
+    db_file = str(tmp_path / "old_schema.db")
+    old_conn = sqlite3.connect(db_file)
+    old_conn.executescript(
+        """
+        CREATE TABLE jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            address TEXT NOT NULL,
+            service_type TEXT,
+            issue_description TEXT,
+            priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('normal','emergency')),
+            status TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','contacting_contractor','awaiting_reply','follow_up_1','follow_up_2','escalating','contractor_confirmed','conditional_pending','no_contractor_available','completed','cancelled','send_failed')),
+            current_contractor TEXT,
+            attempt_count INTEGER DEFAULT 0,
+            contractor_response TEXT,
+            confirmed_time TEXT,
+            next_action_at TEXT,
+            retell_call_id TEXT UNIQUE,
+            transcript TEXT,
+            recording_url TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL REFERENCES jobs(id),
+            direction TEXT NOT NULL CHECK(direction IN ('inbound','outbound')),
+            contractor_name TEXT,
+            body TEXT NOT NULL,
+            parsed_intent TEXT,
+            twilio_sid TEXT,
+            twilio_message_sid TEXT UNIQUE,
+            timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO jobs (customer_name, phone, address)
+        VALUES ('Old Customer', '+15551234567', '123 Main St');
+        """
+    )
+    old_conn.commit()
+    old_conn.close()
+
+    monkeypatch.setenv("DB_PATH", db_file)
+
+    import config
+    importlib.reload(config)
+
+    import db as db_module
+    importlib.reload(db_module)
+
+    db_module.init_db()
+    migrated_conn = db_module.get_connection()
+    try:
+        job = migrated_conn.execute("SELECT * FROM jobs WHERE id = 1").fetchone()
+        assert job["customer_name"] == "Old Customer"
+        updated = db_module.update_job(
+            migrated_conn, job["id"], status="accepted_waiting_eta"
+        )
+        assert updated["status"] == "accepted_waiting_eta"
+    finally:
+        migrated_conn.close()
+
+
 # ---- get_jobs_needing_action ----------------------------------------------
 
 def test_get_jobs_needing_action(db, conn):
@@ -232,6 +302,25 @@ def test_get_most_recent_active_job_none(db, conn):
     assert db.get_most_recent_active_job(conn) is None
 
 
+# ---- get_most_recent_job_for_customer_phone --------------------------------
+
+def test_get_most_recent_job_for_customer_phone_prefers_active(db, conn):
+    old_job = db.create_job(conn, "Alice", "+15551234567", "123 Main St")
+    db.update_job(conn, old_job["id"], status="completed")
+    active_job = db.create_job(conn, "Alice", "+15551234567", "999 New St")
+
+    result = db.get_most_recent_job_for_customer_phone(conn, "+15551234567")
+    assert result["id"] == active_job["id"]
+
+
+def test_get_most_recent_job_for_customer_phone_falls_back_to_recent_terminal(db, conn):
+    job = db.create_job(conn, "Alice", "+15551234567", "123 Main St")
+    db.update_job(conn, job["id"], status="completed")
+
+    result = db.get_most_recent_job_for_customer_phone(conn, "+15551234567")
+    assert result["id"] == job["id"]
+
+
 # ---- get_recent_jobs ------------------------------------------------------
 
 def test_get_recent_jobs(db, conn):
@@ -280,6 +369,14 @@ def test_log_message_dedup(db, conn):
     msg2 = db.log_message(conn, job["id"], "inbound", "Different body", twilio_message_sid="MM_DUP")
     assert msg1["id"] == msg2["id"]
     assert msg2["body"] == "Hello"  # original preserved
+
+
+def test_get_message_by_twilio_message_sid(db, conn):
+    job = db.create_job(conn, "Alice", "+15551234567", "123 Main St")
+    msg = db.log_message(conn, job["id"], "inbound", "Hello", twilio_message_sid="MM_LOOKUP")
+
+    result = db.get_message_by_twilio_message_sid(conn, "MM_LOOKUP")
+    assert result["id"] == msg["id"]
 
 
 # ---- get_last_job_created_at & count_jobs_since ---------------------------

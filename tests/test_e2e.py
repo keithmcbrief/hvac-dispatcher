@@ -302,16 +302,40 @@ def test_emergency_all_contacted_first_wins(
     resp = _post_twilio(client, "+15550001111", "yes", "SM-jose-emerg-001")
     assert resp.status_code == 200
 
-    # Step 4: Verify job confirmed with Jose
+    # Step 4: Verify job is waiting for Jose's ETA before customer notification
     job = db_mod.get_job(conn, job_id)
-    assert job["status"] == "contractor_confirmed"
+    assert job["status"] == "accepted_waiting_eta"
     assert job["current_contractor"] == "Jose"
+    eta_requests = [c for c in mock_send_sms.call_args_list if "What time can you arrive" in c[0][1]]
+    assert len(eta_requests) == 1
+    assert eta_requests[0][0][0] == "+15550001111"
 
     mock_eddie_notify.assert_called()
     eddie_msg = mock_eddie_notify.call_args[0][0]
     assert "Jose" in eddie_msg
+    assert "did not provide an ETA" in eddie_msg
 
-    # Step 5: Verify "has taken this job" SMS sent to Mario and Raul
+    # Step 5: Jose provides ETA; now the job is confirmed
+    mock_classify.return_value = {
+        "intent": "unclear",
+        "time": None,
+        "reason": None,
+        "condition": None,
+        "raw_text": "5pm",
+    }
+
+    resp = _post_twilio(client, "+15550001111", "5pm", "SM-jose-emerg-002")
+    assert resp.status_code == 200
+
+    job = db_mod.get_job(conn, job_id)
+    assert job["status"] == "contractor_confirmed"
+    assert job["current_contractor"] == "Jose"
+    assert job["confirmed_time"] == "5pm"
+
+    # Step 6: Verify customer was texted and Mario/Raul got job-taken notice
+    customer_calls = [c for c in mock_send_sms.call_args_list if c[0][0] == "+15551234567"]
+    assert len(customer_calls) == 1
+
     taken_calls = [c for c in mock_send_sms.call_args_list if "has been taken" in c[0][1]]
     taken_phones = [c[0][0] for c in taken_calls]
     assert "+15550002222" in taken_phones, "Expected job-taken notice to Mario"

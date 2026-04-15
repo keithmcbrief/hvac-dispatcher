@@ -8,9 +8,11 @@ The current workflow is:
 2. The app creates a dispatch job in SQLite.
 3. Contractors are texted through Twilio in priority order.
 4. Contractor replies are classified with a regex fast path and an OpenAI fallback.
-5. Eddie is notified when a contractor confirms, declines, gives a condition, or needs manual handling.
+5. Customers are texted after a contractor confirms with an ETA.
+6. Eddie is notified when a contractor confirms, declines, gives a condition, or needs manual handling.
+7. Customer replies are relayed to Eddie/Slack for manual handling.
 
-V1 coordinates contractors only. Customer confirmation remains manual.
+The app does not auto-answer customer replies. It relays the exact customer message to Eddie/Slack so Eddie can jump in.
 
 ## Architecture
 

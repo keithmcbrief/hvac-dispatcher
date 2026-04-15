@@ -100,6 +100,16 @@ def test_system_alerts_can_be_disabled(monkeypatch):
     assert config.SYSTEM_ALERTS_ENABLED is False
 
 
+def test_business_name_default(monkeypatch):
+    """Customer-facing SMS copy should have a business name fallback."""
+    monkeypatch.delenv("BUSINESS_NAME", raising=False)
+
+    import config
+    importlib.reload(config)
+
+    assert config.BUSINESS_NAME == "Residential AC & Heating"
+
+
 def test_dashboard_slug_from_env(monkeypatch):
     """DASHBOARD_SLUG should use env var when set."""
     monkeypatch.setenv("DASHBOARD_SLUG", "my-slug-01")

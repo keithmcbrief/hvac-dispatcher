@@ -446,6 +446,27 @@ class TestTwilioWebhook:
         mock_send.assert_called_once()
         assert "Commands:" in mock_send.call_args[0][1]
 
+    @patch("main.dispatch.process_customer_reply")
+    @patch("main.sms.validate_twilio_signature", return_value=True)
+    def test_customer_reply(self, mock_validate, mock_customer_reply, client, conn, db):
+        job = db.create_job(
+            conn, "Customer D", "+15554445555", "400 Cedar St",
+            service_type="AC", issue_description="Broken",
+        )
+        db.update_job(conn, job["id"], status="contractor_confirmed", current_contractor="Jose")
+
+        resp = client.post(
+            "/webhook/twilio",
+            data={"From": "+15554445555", "Body": "Can he come earlier?", "MessageSid": "SM550"},
+            headers={"x-twilio-signature": "valid"},
+        )
+
+        assert resp.status_code == 200
+        mock_customer_reply.assert_called_once()
+        assert mock_customer_reply.call_args[0][1]["id"] == job["id"]
+        assert mock_customer_reply.call_args[0][2] == "+15554445555"
+        assert mock_customer_reply.call_args[0][3] == "Can he come earlier?"
+
     @patch("main.sms.validate_twilio_signature", return_value=True)
     def test_unknown_number_ignored(self, mock_validate, client):
         resp = client.post(

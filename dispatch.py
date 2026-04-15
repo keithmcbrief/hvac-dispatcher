@@ -7,6 +7,7 @@ polling loop.
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 
 import config
@@ -98,6 +99,58 @@ def _build_job_sms(job) -> str:
     return "\n".join(lines)
 
 
+def _eta_from_reply_text(text: str) -> str | None:
+    """Extract a usable ETA from short contractor replies."""
+    stripped = (text or "").strip()
+    lower = stripped.lower()
+    if not stripped:
+        return None
+
+    if re.search(r"\b(omw|on my way|on the way|heading (over|there|out)|en route)\b", lower):
+        return "on the way"
+
+    if re.search(r"\b(1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(am|pm)\b", lower):
+        return stripped
+
+    if re.search(r"\b(in|about|around)\s+\d+\s*(min|mins|minutes|hour|hours|hr|hrs)\b", lower):
+        return stripped
+
+    if re.search(r"\b(today|tomorrow|tonight)\b", lower) and re.search(
+        r"\b(morning|afternoon|evening|night|noon|[1-9]|1[0-2])\b", lower
+    ):
+        return stripped
+
+    return None
+
+
+def _confirmed_time_from_result(result: dict) -> str | None:
+    """Return the ETA that is safe to send to the customer."""
+    extracted_time = (result.get("time") or "").strip()
+    if extracted_time:
+        return extracted_time
+    return _eta_from_reply_text(result.get("raw_text", ""))
+
+
+def _build_eta_request_sms(job) -> str:
+    return (
+        f"Thanks. What time can you arrive for Job #{job['id']}? "
+        'Please reply with an ETA like "5pm" or "in 45 minutes".'
+    )
+
+
+def _build_customer_confirmation_sms(job, contractor_name: str, time_display: str) -> str:
+    service = job["service_type"] or "service request"
+    if time_display.lower() == "on the way":
+        return (
+            f"{config.BUSINESS_NAME}: {contractor_name} is on the way for your "
+            f"{service} at {job['address']}. Reply here if anything changes."
+        )
+    return (
+        f"{config.BUSINESS_NAME}: {contractor_name} is confirmed for {time_display} "
+        f"for your {service} at {job['address']}. Reply here if anything changes."
+    )
+
+
 def _send_and_log(conn, job_id, contractor_name, phone, body):
     """Send SMS and log the outbound message. Returns the twilio SID."""
     try:
@@ -125,6 +178,25 @@ def _notify_eddie(conn, job_id, body):
         contractor_name="Eddie", twilio_sid=sid,
     )
     return sid
+
+
+def _notify_customer_confirmed(conn, job, contractor_name: str, time_display: str) -> tuple[bool, str]:
+    """Text the customer with contractor confirmation details."""
+    body = _build_customer_confirmation_sms(job, contractor_name, time_display)
+    if not job["phone"]:
+        logger.warning("No customer phone for job %s", job["id"])
+        return False, body
+
+    try:
+        sid = sms.send_sms(job["phone"], body)
+        db_module.log_message(
+            conn, job["id"], "outbound", body,
+            contractor_name="Customer", twilio_sid=sid,
+        )
+        return True, body
+    except Exception:
+        logger.exception("Failed to notify customer for job %s", job["id"])
+        return False, body
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +301,20 @@ def start_dispatch(conn, job_id):
 
 def process_contractor_reply(conn, job, contractor_name, reply_text, twilio_message_sid=None):
     """Process an inbound SMS from a contractor for a given job."""
+    if twilio_message_sid and db_module.get_message_by_twilio_message_sid(conn, twilio_message_sid):
+        logger.info("Duplicate contractor SMS ignored: %s", twilio_message_sid)
+        return
+
     result = classify_reply(reply_text)
+    if job["status"] == "accepted_waiting_eta":
+        eta = result.get("time") or _eta_from_reply_text(reply_text)
+        if eta:
+            result = {
+                **result,
+                "intent": "accepted",
+                "time": eta,
+                "raw_text": reply_text,
+            }
     intent = result["intent"]
 
     # Log inbound message (twilio_message_sid used for dedup in production)
@@ -266,10 +351,40 @@ def process_contractor_reply(conn, job, contractor_name, reply_text, twilio_mess
         )
 
 
+def process_customer_reply(conn, job, from_number, reply_text, twilio_message_sid=None):
+    """Relay an inbound customer SMS to Eddie/Slack with job context."""
+    if twilio_message_sid and db_module.get_message_by_twilio_message_sid(conn, twilio_message_sid):
+        logger.info("Duplicate customer SMS ignored: %s", twilio_message_sid)
+        return
+
+    db_module.log_message(
+        conn, job["id"], "inbound", reply_text,
+        contractor_name="Customer",
+        twilio_message_sid=twilio_message_sid,
+    )
+
+    assigned = job["current_contractor"] or "not assigned"
+    eta = job["confirmed_time"] or "not set"
+    _notify_eddie(
+        conn,
+        job["id"],
+        f"💬 Customer reply for Job #{job['id']}\n\n"
+        f"Customer: {job['customer_name']} ({from_number or job['phone']})\n"
+        f"Address: {job['address']}\n"
+        f"Assigned: {assigned}\n"
+        f"ETA: {eta}\n\n"
+        f"Message:\n\"{reply_text}\""
+    )
+
+
 def _handle_accepted(conn, job, contractor_name, result):
     """Handle an accepted reply — confirm the job and notify Eddie."""
-    confirmed_time = result.get("time")
-    time_display = confirmed_time if confirmed_time else "not specified"
+    confirmed_time = _confirmed_time_from_result(result)
+    if not confirmed_time:
+        _handle_accepted_missing_eta(conn, job, contractor_name, result)
+        return
+
+    time_display = confirmed_time
 
     db_module.update_job(
         conn, job["id"],
@@ -282,14 +397,61 @@ def _handle_accepted(conn, job, contractor_name, result):
 
     # Refresh job to get latest data after update
     job = db_module.get_job(conn, job["id"])
+    customer_sent, customer_body = _notify_customer_confirmed(
+        conn, job, contractor_name, time_display
+    )
     summary = _build_eddie_summary(conn, job, contractor_name=contractor_name, time_display=time_display)
+    customer_status = (
+        f"Customer text sent:\n{customer_body}"
+        if customer_sent
+        else f"Customer text was NOT sent. Please contact the customer manually:\n{customer_body}"
+    )
     _notify_eddie(
         conn, job["id"],
-        f"✓ CONFIRMED\n\n{summary}\n\nPlease contact the customer to confirm the appointment."
+        f"✓ CONFIRMED\n\n{summary}\n\n{customer_status}"
     )
 
     # Notify any other contractors who were contacted that the job is taken
     _notify_other_contractors_job_taken(conn, job, contractor_name)
+
+
+def _handle_accepted_missing_eta(conn, job, contractor_name, result):
+    """Ask the accepting contractor for an ETA before notifying the customer."""
+    db_module.update_job(
+        conn, job["id"],
+        status="accepted_waiting_eta",
+        current_contractor=contractor_name,
+        contractor_response=result.get("raw_text", ""),
+        next_action_at=None,
+    )
+
+    phone = config.CONTRACTORS.get(contractor_name, {}).get("phone")
+    eta_request_sent = False
+    if phone:
+        try:
+            _send_and_log(
+                conn,
+                job["id"],
+                contractor_name,
+                phone,
+                _build_eta_request_sms(job),
+            )
+            eta_request_sent = True
+        except Exception:
+            logger.exception("Failed to request ETA from %s for job %s", contractor_name, job["id"])
+
+    request_status = (
+        f"Asked {contractor_name} for an ETA."
+        if eta_request_sent
+        else f"Could not text {contractor_name} for an ETA."
+    )
+    _notify_eddie(
+        conn,
+        job["id"],
+        f"⚠️ Job #{job['id']}: {contractor_name} accepted but did not provide an ETA.\n\n"
+        f"{request_status}\n"
+        "Customer has not been texted yet."
+    )
 
 
 def _notify_other_contractors_job_taken(conn, job, accepted_contractor):
@@ -554,7 +716,7 @@ def process_eddie_command(conn, job, command):
             )
 
     elif command == "NEXT":
-        if job["status"] in ("conditional_pending", "awaiting_reply"):
+        if job["status"] in ("conditional_pending", "awaiting_reply", "accepted_waiting_eta"):
             escalate_to_next(conn, job)
 
     elif command == "URGENT":

@@ -29,6 +29,9 @@ SYSTEM_ALERTS_ENABLED = os.getenv("SYSTEM_ALERTS_ENABLED", "true").lower() not i
     "off",
 )
 
+# Customer-facing copy
+BUSINESS_NAME = os.getenv("BUSINESS_NAME", "Residential AC & Heating")
+
 # Eddie's phone
 EDDIE_PHONE = os.getenv("EDDIE_PHONE", "")
 

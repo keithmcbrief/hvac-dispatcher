@@ -431,7 +431,18 @@ async def webhook_twilio(request: Request):
                 )
 
         else:
-            logger.info("Inbound SMS from unknown number %s — ignoring", from_number)
+            customer_phone = _normalize_us_phone(from_number)
+            job = db_module.get_most_recent_job_for_customer_phone(conn, customer_phone)
+            if job:
+                dispatch.process_customer_reply(
+                    conn,
+                    job,
+                    customer_phone,
+                    body,
+                    twilio_message_sid=message_sid,
+                )
+            else:
+                logger.info("Inbound SMS from unknown number %s — ignoring", from_number)
 
         return Response(content=TWIML_EMPTY, media_type="text/xml")
     finally:

@@ -225,6 +225,108 @@ def test_reply_accepted_normal(mock_sms, mock_classify, dispatch_module, db, con
     assert "2pm" in notif
 
 
+@patch("dispatch.classify_reply")
+@patch("dispatch.sms")
+def test_reply_accepted_texts_customer(mock_sms, mock_classify, dispatch_module, db, conn):
+    """Accepted reply with ETA should text the customer and notify Eddie."""
+    mock_sms.send_sms.return_value = "SM_TEST_SID"
+    mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
+    mock_classify.return_value = {
+        "intent": "accepted",
+        "time": "5pm",
+        "reason": None,
+        "condition": None,
+        "raw_text": "Yes 5pm",
+    }
+
+    job = _create_test_job(db, conn)
+    db.update_job(conn, job["id"], status="contacting_contractor", current_contractor="Jose")
+    job = db.get_job(conn, job["id"])
+
+    dispatch_module.process_contractor_reply(conn, job, "Jose", "Yes 5pm")
+
+    customer_calls = [
+        c for c in mock_sms.send_sms.call_args_list if c[0][0] == "+15551234567"
+    ]
+    assert len(customer_calls) == 1
+    assert "Jose is confirmed for 5pm" in customer_calls[0][0][1]
+    assert "Reply here if anything changes" in customer_calls[0][0][1]
+
+    notif = mock_sms.send_eddie_notification.call_args[0][0]
+    assert "Customer text sent" in notif
+    assert "Jose is confirmed for 5pm" in notif
+
+
+@patch("dispatch.classify_reply")
+@patch("dispatch.sms")
+def test_reply_accepted_without_eta_requests_eta(mock_sms, mock_classify, dispatch_module, db, conn):
+    """Accepted reply without ETA should ask contractor for time and not text customer."""
+    mock_sms.send_sms.return_value = "SM_TEST_SID"
+    mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
+    mock_classify.return_value = {
+        "intent": "accepted",
+        "time": None,
+        "reason": None,
+        "condition": None,
+        "raw_text": "yes",
+    }
+
+    job = _create_test_job(db, conn)
+    db.update_job(conn, job["id"], status="contacting_contractor", current_contractor="Jose")
+    job = db.get_job(conn, job["id"])
+
+    dispatch_module.process_contractor_reply(conn, job, "Jose", "yes")
+
+    updated = db.get_job(conn, job["id"])
+    assert updated["status"] == "accepted_waiting_eta"
+    assert updated["current_contractor"] == "Jose"
+    assert updated["next_action_at"] is None
+
+    mock_sms.send_sms.assert_called_once()
+    assert mock_sms.send_sms.call_args[0][0] == "+15550001111"
+    assert "What time can you arrive" in mock_sms.send_sms.call_args[0][1]
+    assert "+15551234567" not in [c[0][0] for c in mock_sms.send_sms.call_args_list]
+
+    notif = mock_sms.send_eddie_notification.call_args[0][0]
+    assert "accepted but did not provide an ETA" in notif
+    assert "Customer has not been texted yet" in notif
+
+
+@patch("dispatch.classify_reply")
+@patch("dispatch.sms")
+def test_reply_waiting_for_eta_accepts_time_only(mock_sms, mock_classify, dispatch_module, db, conn):
+    """When waiting for ETA, a time-only reply should confirm and text customer."""
+    mock_sms.send_sms.return_value = "SM_TEST_SID"
+    mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
+    mock_classify.return_value = {
+        "intent": "unclear",
+        "time": None,
+        "reason": None,
+        "condition": None,
+        "raw_text": "5pm",
+    }
+
+    job = _create_test_job(db, conn)
+    db.update_job(
+        conn,
+        job["id"],
+        status="accepted_waiting_eta",
+        current_contractor="Jose",
+        contractor_response="yes",
+    )
+    job = db.get_job(conn, job["id"])
+
+    dispatch_module.process_contractor_reply(conn, job, "Jose", "5pm")
+
+    updated = db.get_job(conn, job["id"])
+    assert updated["status"] == "contractor_confirmed"
+    assert updated["confirmed_time"] == "5pm"
+    customer_calls = [
+        c for c in mock_sms.send_sms.call_args_list if c[0][0] == "+15551234567"
+    ]
+    assert len(customer_calls) == 1
+
+
 # ---------------------------------------------------------------------------
 # process_contractor_reply — accepted (emergency, notifies others)
 # ---------------------------------------------------------------------------
@@ -787,3 +889,59 @@ def test_inbound_message_logged(mock_sms, mock_classify, dispatch_module, db, co
     assert len(messages) == 1
     assert messages[0]["parsed_intent"] == "accepted"
     assert messages[0]["contractor_name"] == "Jose"
+
+
+@patch("dispatch.sms")
+def test_customer_reply_relayed_to_eddie(mock_sms, dispatch_module, db, conn):
+    """Customer replies should be logged and relayed with exact text."""
+    mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
+
+    job = _create_test_job(db, conn)
+    db.update_job(
+        conn,
+        job["id"],
+        status="contractor_confirmed",
+        current_contractor="Jose",
+        confirmed_time="5pm",
+    )
+    job = db.get_job(conn, job["id"])
+
+    dispatch_module.process_customer_reply(
+        conn,
+        job,
+        "+15551234567",
+        "Can he come earlier?",
+        twilio_message_sid="SM_CUSTOMER_1",
+    )
+
+    notif = mock_sms.send_eddie_notification.call_args[0][0]
+    assert "Customer reply" in notif
+    assert "Can he come earlier?" in notif
+    assert "Job #" in notif
+
+    messages = conn.execute(
+        "SELECT * FROM messages WHERE job_id = ? AND contractor_name = 'Customer'",
+        (job["id"],),
+    ).fetchall()
+    assert len(messages) == 1
+    assert messages[0]["direction"] == "inbound"
+    assert messages[0]["body"] == "Can he come earlier?"
+
+
+@patch("dispatch.sms")
+def test_customer_reply_duplicate_sid_ignored(mock_sms, dispatch_module, db, conn):
+    """Duplicate Twilio retries should not relay the same customer reply twice."""
+    mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
+
+    job = _create_test_job(db, conn)
+    db.update_job(conn, job["id"], status="contractor_confirmed")
+    job = db.get_job(conn, job["id"])
+
+    dispatch_module.process_customer_reply(
+        conn, job, "+15551234567", "OK", twilio_message_sid="SM_DUP_CUSTOMER"
+    )
+    dispatch_module.process_customer_reply(
+        conn, job, "+15551234567", "OK again", twilio_message_sid="SM_DUP_CUSTOMER"
+    )
+
+    mock_sms.send_eddie_notification.assert_called_once()

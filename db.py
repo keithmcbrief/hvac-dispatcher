@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     service_type TEXT,
     issue_description TEXT,
     priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('normal','emergency')),
-    status TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','contacting_contractor','awaiting_reply','follow_up_1','follow_up_2','escalating','contractor_confirmed','conditional_pending','no_contractor_available','completed','cancelled','send_failed')),
+    status TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','contacting_contractor','awaiting_reply','follow_up_1','follow_up_2','escalating','accepted_waiting_eta','contractor_confirmed','conditional_pending','no_contractor_available','completed','cancelled','send_failed')),
     current_contractor TEXT,
     attempt_count INTEGER DEFAULT 0,
     contractor_response TEXT,
@@ -40,6 +40,29 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 """
 
+_JOBS_SCHEMA_WITH_WAITING_ETA = """
+CREATE TABLE jobs_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    address TEXT NOT NULL,
+    service_type TEXT,
+    issue_description TEXT,
+    priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('normal','emergency')),
+    status TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','contacting_contractor','awaiting_reply','follow_up_1','follow_up_2','escalating','accepted_waiting_eta','contractor_confirmed','conditional_pending','no_contractor_available','completed','cancelled','send_failed')),
+    current_contractor TEXT,
+    attempt_count INTEGER DEFAULT 0,
+    contractor_response TEXT,
+    confirmed_time TEXT,
+    next_action_at TEXT,
+    retell_call_id TEXT UNIQUE,
+    transcript TEXT,
+    recording_url TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 
 def init_db():
     """Create tables if they don't exist. Sets WAL mode and busy_timeout."""
@@ -49,8 +72,40 @@ def init_db():
         conn.execute("PRAGMA busy_timeout=5000")
         conn.executescript(_SCHEMA)
         conn.commit()
+        _migrate_accepted_waiting_eta_status(conn)
     finally:
         conn.close()
+
+
+def _migrate_accepted_waiting_eta_status(conn):
+    """Allow the accepted_waiting_eta job status on existing SQLite DBs."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'"
+    ).fetchone()
+    if not row or "accepted_waiting_eta" in (row["sql"] or ""):
+        return
+
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.executescript(_JOBS_SCHEMA_WITH_WAITING_ETA)
+        conn.execute(
+            """INSERT INTO jobs_new
+               (id, customer_name, phone, address, service_type, issue_description,
+                priority, status, current_contractor, attempt_count,
+                contractor_response, confirmed_time, next_action_at, retell_call_id,
+                transcript, recording_url, created_at, updated_at)
+               SELECT id, customer_name, phone, address, service_type, issue_description,
+                      priority, status, current_contractor, attempt_count,
+                      contractor_response, confirmed_time, next_action_at, retell_call_id,
+                      transcript, recording_url, created_at, updated_at
+               FROM jobs"""
+        )
+        conn.execute("DROP TABLE jobs")
+        conn.execute("ALTER TABLE jobs_new RENAME TO jobs")
+        conn.commit()
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
 
 
 def get_connection():
@@ -173,6 +228,22 @@ def get_most_recent_active_job(conn):
     ).fetchone()
 
 
+def get_most_recent_job_for_customer_phone(conn, phone):
+    """Return the most recent job for a customer phone, preferring active jobs."""
+    return conn.execute(
+        """SELECT * FROM jobs
+           WHERE phone = ?
+           ORDER BY
+             CASE
+               WHEN status NOT IN ('completed', 'cancelled', 'no_contractor_available')
+               THEN 0 ELSE 1
+             END,
+             id DESC
+           LIMIT 1""",
+        (phone,),
+    ).fetchone()
+
+
 def get_recent_jobs(conn, limit=50):
     """Return last N jobs ordered by id DESC."""
     return conn.execute(
@@ -227,6 +298,16 @@ def log_message(
     )
     conn.commit()
     return conn.execute("SELECT * FROM messages WHERE id = ?", (cur.lastrowid,)).fetchone()
+
+
+def get_message_by_twilio_message_sid(conn, twilio_message_sid):
+    """Return a logged message by Twilio inbound MessageSid, or None."""
+    if not twilio_message_sid:
+        return None
+    return conn.execute(
+        "SELECT * FROM messages WHERE twilio_message_sid = ?",
+        (twilio_message_sid,),
+    ).fetchone()
 
 
 def get_last_job_created_at(conn):
