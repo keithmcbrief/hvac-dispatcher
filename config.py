@@ -22,6 +22,12 @@ SAVE_WEBHOOK_LOGS = os.getenv("SAVE_WEBHOOK_LOGS", "").lower() in ("true", "1", 
 
 # Alert / builder phone
 BUILDER_PHONE = os.getenv("BUILDER_PHONE", "")
+SYSTEM_ALERTS_ENABLED = os.getenv("SYSTEM_ALERTS_ENABLED", "true").lower() not in (
+    "false",
+    "0",
+    "no",
+    "off",
+)
 
 # Eddie's phone
 EDDIE_PHONE = os.getenv("EDDIE_PHONE", "")

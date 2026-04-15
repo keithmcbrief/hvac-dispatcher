@@ -80,6 +80,26 @@ def test_timing_constants(monkeypatch):
     assert config.HEARTBEAT_ALERT_INTERVAL_HOURS == 24
 
 
+def test_system_alerts_enabled_by_default(monkeypatch):
+    """System/error alerts should be enabled unless explicitly muted."""
+    monkeypatch.delenv("SYSTEM_ALERTS_ENABLED", raising=False)
+
+    import config
+    importlib.reload(config)
+
+    assert config.SYSTEM_ALERTS_ENABLED is True
+
+
+def test_system_alerts_can_be_disabled(monkeypatch):
+    """SYSTEM_ALERTS_ENABLED=false is the emergency alert mute switch."""
+    monkeypatch.setenv("SYSTEM_ALERTS_ENABLED", "false")
+
+    import config
+    importlib.reload(config)
+
+    assert config.SYSTEM_ALERTS_ENABLED is False
+
+
 def test_dashboard_slug_from_env(monkeypatch):
     """DASHBOARD_SLUG should use env var when set."""
     monkeypatch.setenv("DASHBOARD_SLUG", "my-slug-01")

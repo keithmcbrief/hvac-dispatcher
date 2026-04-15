@@ -123,6 +123,28 @@ fly deploy -a hvac-dispatcher --ha=false
 
 This service is designed for one running instance because it uses local SQLite and an in-process polling loop.
 
+## Emergency Switches
+
+Mute system/error alerts immediately if Slack starts getting spammed by polling alerts:
+
+```bash
+fly secrets set -a hvac-dispatcher SYSTEM_ALERTS_ENABLED=false
+```
+
+This does not stop customer/job Slack notifications, transcripts, or contractor texts. It only mutes messages sent through `[HVAC DISPATCH ALERT]`, such as stale-job, heartbeat, and polling-loop alerts.
+
+Re-enable system alerts after the issue is fixed:
+
+```bash
+fly secrets set -a hvac-dispatcher SYSTEM_ALERTS_ENABLED=true
+```
+
+Disable only the no-new-jobs heartbeat:
+
+```bash
+fly secrets set -a hvac-dispatcher HEARTBEAT_HOURS=0
+```
+
 ## Security Notes
 
 - `.env` is ignored and must not be committed.

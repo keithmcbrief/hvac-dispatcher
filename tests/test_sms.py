@@ -83,6 +83,16 @@ class TestSendErrorAlert:
             body="[HVAC DISPATCH ALERT] Job stuck",
         )
 
+    def test_system_alert_switch_skips_delivery(self, _reset_sms, mock_client):
+        sms = _reset_sms
+        sms.config.SYSTEM_ALERTS_ENABLED = False
+
+        with patch.object(sms, "_get_client", return_value=mock_client) as get_client:
+            sms.send_error_alert("Job stuck")
+
+        get_client.assert_not_called()
+        mock_client.messages.create.assert_not_called()
+
     def test_catches_own_exceptions(self, _reset_sms, mock_client):
         sms = _reset_sms
         mock_client.messages.create.side_effect = RuntimeError("boom")

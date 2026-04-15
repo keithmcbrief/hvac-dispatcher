@@ -57,6 +57,10 @@ def send_error_alert(message: str) -> None:
 
     Catches its own exceptions so an alert failure never crashes the app.
     """
+    if not config.SYSTEM_ALERTS_ENABLED:
+        logger.warning("System alerts disabled, dropping alert: %s", message)
+        return
+
     body = f"[HVAC DISPATCH ALERT] {message}"
     try:
         if config.SLACK_ENABLED:
