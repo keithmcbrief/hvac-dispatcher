@@ -65,6 +65,8 @@ def test_timing_constants(monkeypatch):
     """Verify timing constants have expected default values."""
     monkeypatch.delenv("FOLLOW_UP_INTERVAL_SECONDS", raising=False)
     monkeypatch.delenv("POLL_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("HEARTBEAT_HOURS", raising=False)
+    monkeypatch.delenv("HEARTBEAT_ALERT_INTERVAL_HOURS", raising=False)
 
     import config
     importlib.reload(config)
@@ -75,6 +77,7 @@ def test_timing_constants(monkeypatch):
     assert config.STALENESS_ALERT_MINUTES == 15
     assert config.JOB_TTL_HOURS == 24
     assert config.HEARTBEAT_HOURS == 12
+    assert config.HEARTBEAT_ALERT_INTERVAL_HOURS == 24
 
 
 def test_dashboard_slug_from_env(monkeypatch):

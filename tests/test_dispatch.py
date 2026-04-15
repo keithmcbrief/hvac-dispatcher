@@ -640,6 +640,41 @@ def test_expired_confirmed_jobs_auto_complete(mock_sms, dispatch_module, db, con
 
 
 # ---------------------------------------------------------------------------
+# Polling loop — heartbeat alerts
+# ---------------------------------------------------------------------------
+
+
+def test_heartbeat_alert_disabled_when_threshold_zero(dispatch_module):
+    """HEARTBEAT_HOURS <= 0 disables no-new-jobs alerts."""
+    dispatch_module.config.HEARTBEAT_HOURS = 0
+    dispatch_module.config.HEARTBEAT_ALERT_INTERVAL_HOURS = 24
+    dispatch_module._last_heartbeat_alert_at = None
+
+    now = datetime(2026, 4, 15, 15, 0, tzinfo=timezone.utc)
+    last_created = "2026-04-14 00:00:00"
+
+    assert dispatch_module._should_send_heartbeat_alert(now, last_created) is False
+
+
+def test_heartbeat_alert_throttles_repeated_stale_checks(dispatch_module):
+    """A stale last job should alert once, then wait for the throttle window."""
+    dispatch_module.config.HEARTBEAT_HOURS = 12
+    dispatch_module.config.HEARTBEAT_ALERT_INTERVAL_HOURS = 24
+    dispatch_module._last_heartbeat_alert_at = None
+
+    now = datetime(2026, 4, 15, 15, 0, tzinfo=timezone.utc)
+    last_created = "2026-04-14 00:00:00"
+
+    assert dispatch_module._should_send_heartbeat_alert(now, last_created) is True
+    assert dispatch_module._should_send_heartbeat_alert(
+        now + timedelta(minutes=1), last_created
+    ) is False
+    assert dispatch_module._should_send_heartbeat_alert(
+        now + timedelta(hours=24, minutes=1), last_created
+    ) is True
+
+
+# ---------------------------------------------------------------------------
 # Polling loop — async integration test
 # ---------------------------------------------------------------------------
 

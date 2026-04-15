@@ -16,6 +16,8 @@ from classifier import classify_reply
 
 logger = logging.getLogger(__name__)
 
+_last_heartbeat_alert_at: datetime | None = None
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -31,6 +33,36 @@ def _format_dt(dt: datetime) -> str:
 
 def _next_action_time() -> str:
     return _format_dt(_now_utc() + timedelta(seconds=config.FOLLOW_UP_INTERVAL_SECONDS))
+
+
+def _should_send_heartbeat_alert(now: datetime, last_created: str | None) -> bool:
+    """Return True when the no-new-jobs heartbeat should alert."""
+    global _last_heartbeat_alert_at
+
+    if config.HEARTBEAT_HOURS <= 0 or not last_created:
+        return False
+
+    try:
+        last_dt = datetime.strptime(last_created, "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        logger.warning("Invalid last job timestamp: %s", last_created)
+        return False
+
+    if (now - last_dt) <= timedelta(hours=config.HEARTBEAT_HOURS):
+        return False
+
+    if (
+        config.HEARTBEAT_ALERT_INTERVAL_HOURS > 0
+        and _last_heartbeat_alert_at is not None
+        and (now - _last_heartbeat_alert_at)
+        < timedelta(hours=config.HEARTBEAT_ALERT_INTERVAL_HOURS)
+    ):
+        return False
+
+    _last_heartbeat_alert_at = now
+    return True
 
 
 def _contractors_by_priority() -> list[dict]:
@@ -582,15 +614,11 @@ async def run_polling_loop(db_path):
                 now = _now_utc()
                 if 8 <= now.hour < 20:
                     last_created = db_module.get_last_job_created_at(conn)
-                    if last_created:
-                        last_dt = datetime.strptime(last_created, "%Y-%m-%d %H:%M:%S").replace(
-                            tzinfo=timezone.utc
+                    if _should_send_heartbeat_alert(now, last_created):
+                        sms.send_error_alert(
+                            f"No new jobs in {config.HEARTBEAT_HOURS}+ hours. "
+                            f"Is the system receiving calls?"
                         )
-                        if (now - last_dt) > timedelta(hours=config.HEARTBEAT_HOURS):
-                            sms.send_error_alert(
-                                f"No new jobs in {config.HEARTBEAT_HOURS}+ hours. "
-                                f"Is the system receiving calls?"
-                            )
 
             finally:
                 conn.close()
