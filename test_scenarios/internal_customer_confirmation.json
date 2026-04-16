@@ -1,0 +1,19 @@
+{
+  "event": "call_analyzed",
+  "call": {
+    "call_id": "internal_customer_confirmation",
+    "from_number": "+15551234567",
+    "call_analysis": {
+      "custom_analysis_data": {
+        "caller_name": "Keith Test",
+        "caller_phone": "5551234567",
+        "urgency": "normal",
+        "service_needed": "AC repair",
+        "is_lead": true,
+        "service_address": "123 Test Street, Katy, TX 77493",
+        "Issue_description": "AC is running but not cooling"
+      },
+      "transcript": "Agent: Hi this is Kristi with Residential AC & Heating, how can I help you today?\nUser: My AC is running but not cooling.\nAgent: What is the service address?\nUser: 123 Test Street, Katy, Texas 77493.\nAgent: Eddy will reach out shortly."
+    }
+  }
+}

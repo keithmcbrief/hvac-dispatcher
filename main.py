@@ -509,7 +509,13 @@ async def dashboard(request: Request, slug: str):
         return templates.TemplateResponse(
             request=request,
             name="dashboard.html",
-            context={"request": request, "jobs": jobs, "slug": slug},
+            context={
+                "request": request,
+                "jobs": jobs,
+                "slug": slug,
+                "dry_run": config.DRY_RUN,
+                "slack_enabled": config.SLACK_ENABLED,
+            },
         )
     finally:
         conn.close()
@@ -644,7 +650,7 @@ async def fire_scenario(name: str):
         return {"status": "skipped", "reason": "not a lead", "scenario": name}
 
     if phone and not phone.startswith("+"):
-        phone = f"+{phone}"
+        phone = _normalize_us_phone(phone)
 
     conn = db_module.get_connection()
     try:
@@ -708,6 +714,44 @@ async def test_reply(request: Request):
 
         dispatch.process_contractor_reply(conn, job, contractor_name, body)
         return {"status": "ok", "job_id": job["id"], "contractor": contractor_name}
+    finally:
+        conn.close()
+
+
+@app.post("/test/customer")
+async def test_customer_reply(request: Request):
+    """Simulate a customer SMS reply. DRY_RUN mode only."""
+    if not config.DRY_RUN:
+        return JSONResponse(status_code=403, content={"error": "Only available in DRY_RUN mode"})
+
+    data = await request.json()
+    body = data.get("body", "")
+    job_id = data.get("job_id")
+    phone = data.get("phone", "")
+
+    if not body:
+        return JSONResponse(status_code=400, content={"error": "body required"})
+
+    customer_phone = _normalize_us_phone(phone) if phone else ""
+    conn = db_module.get_connection()
+    try:
+        if job_id:
+            job = db_module.get_job(conn, job_id)
+        elif customer_phone:
+            job = db_module.get_most_recent_job_for_customer_phone(conn, customer_phone)
+        else:
+            job = db_module.get_most_recent_active_job(conn)
+
+        if not job:
+            return JSONResponse(status_code=404, content={"error": "No customer job found"})
+
+        dispatch.process_customer_reply(
+            conn,
+            job,
+            customer_phone or job["phone"],
+            body,
+        )
+        return {"status": "ok", "job_id": job["id"], "phone": customer_phone or job["phone"]}
     finally:
         conn.close()
 

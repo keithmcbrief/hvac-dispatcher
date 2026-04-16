@@ -10,6 +10,9 @@
     h1 { font-size: 1.3rem; margin-bottom: 12px; color: #fff; }
 
     /* Top bar */
+    .mode-banner { margin-bottom: 12px; padding: 10px 14px; border-radius: 8px; background: #2a2a2a; color: #ccc; font-size: 0.85rem; border-left: 4px solid #0a84ff; }
+    .mode-banner strong { color: #fff; }
+    .mode-banner.warn { border-left-color: #ff9500; }
     .top-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; padding: 10px 14px; background: #2a2a2a; border-radius: 10px; }
     .top-bar select { padding: 6px 8px; border: 1px solid #444; border-radius: 6px; font-size: 0.85rem; background: #333; color: #fff; min-width: 200px; }
     .top-bar button { padding: 6px 14px; border: none; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
@@ -25,8 +28,9 @@
     .stat strong { color: #fff; font-size: 1.2rem; display: block; }
 
     /* Phone grid */
-    .phones { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-    @media (max-width: 1200px) { .phones { grid-template-columns: repeat(2, 1fr); } }
+    .phones { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+    @media (max-width: 1500px) { .phones { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 1000px) { .phones { grid-template-columns: repeat(2, 1fr); } }
     @media (max-width: 600px) { .phones { grid-template-columns: 1fr; } }
 
     /* Individual phone */
@@ -81,6 +85,17 @@
 <body>
   <h1>Eddie HVAC Dispatch</h1>
 
+  {% if dry_run %}
+  <div class="mode-banner{% if slack_enabled %} warn{% endif %}">
+    <strong>Dry-run mode.</strong> Contractor and customer texts are simulated.
+    {% if slack_enabled %}Slack is enabled and will post to the configured webhook.{% else %}Slack is disabled for this run.{% endif %}
+  </div>
+  {% else %}
+  <div class="mode-banner warn">
+    <strong>Live mode.</strong> Test controls are disabled unless <code>DRY_RUN=true</code>.
+  </div>
+  {% endif %}
+
   <div class="top-bar" id="top-bar">
     <select id="scenario-select"><option value="">Loading...</option></select>
     <button class="btn-fire" onclick="fireScenario()">Fire Scenario</button>
@@ -88,7 +103,7 @@
     <span class="top-status" id="top-status"></span>
   </div>
 
-  {% set active_count = jobs | selectattr("status", "in", ["new", "contacting_contractor", "awaiting_reply", "follow_up_1", "follow_up_2", "escalating", "conditional_pending"]) | list | length %}
+  {% set active_count = jobs | selectattr("status", "in", ["new", "contacting_contractor", "awaiting_reply", "follow_up_1", "follow_up_2", "escalating", "accepted_waiting_eta", "conditional_pending"]) | list | length %}
   {% set confirmed_count = jobs | selectattr("status", "equalto", "contractor_confirmed") | list | length %}
 
   <div class="stats">
@@ -179,6 +194,25 @@
         <button onclick="eddieType()">&#x2191;</button>
       </div>
     </div>
+
+    <!-- Customer -->
+    <div class="phone" id="phone-Customer">
+      <div class="phone-header">
+        <div class="phone-avatar" style="background:#64d2ff;color:#111;">C</div>
+        <div>
+          <div class="phone-name">Customer</div>
+          <div class="phone-role">Caller</div>
+        </div>
+        <div class="phone-status" id="status-Customer" style="background:#333;color:#888;">waiting</div>
+      </div>
+      <div class="phone-messages" id="msgs-Customer">
+        <div class="phone-empty">No customer messages yet</div>
+      </div>
+      <div class="phone-input">
+        <input type="text" id="input-Customer" placeholder="Reply as customer..." onkeydown="if(event.key==='Enter')sendCustomer()">
+        <button onclick="sendCustomer()">&#x2191;</button>
+      </div>
+    </div>
   </div>
 
   <!-- Compact jobs table -->
@@ -207,7 +241,7 @@
           <td>{% if job["priority"] == "emergency" %}<span style="color:#ff3b30;font-weight:700;">emergency</span>{% else %}normal{% endif %}</td>
           <td>
             {% set s = job["status"] %}
-            {% if s in ["contacting_contractor", "awaiting_reply", "follow_up_1", "follow_up_2", "escalating", "conditional_pending", "new"] %}
+            {% if s in ["contacting_contractor", "awaiting_reply", "follow_up_1", "follow_up_2", "escalating", "accepted_waiting_eta", "conditional_pending", "new"] %}
               <span class="status-badge sb-active">{{ s | replace("_", " ") }}</span>
             {% elif s == "contractor_confirmed" %}
               <span class="status-badge sb-confirmed">confirmed</span>
@@ -280,6 +314,21 @@
       .catch(function() {});
     }
 
+    function sendCustomer() {
+      var input = document.getElementById("input-Customer");
+      var text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      fetch("/test/customer", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({body: text})
+      })
+      .then(function(r) { return r.json(); })
+      .then(function() { refreshAll(); })
+      .catch(function() {});
+    }
+
     function eddieCmd(cmd) {
       fetch("/test/eddie", {
         method: "POST",
@@ -308,7 +357,7 @@
     }
 
     function renderMessages(allMsgs) {
-      var byPerson = {Jose: [], Mario: [], Raul: [], Eddie: []};
+      var byPerson = {Jose: [], Mario: [], Raul: [], Eddie: [], Customer: []};
 
       allMsgs.forEach(function(m) {
         var cn = m.contractor_name;
@@ -320,7 +369,7 @@
         }
       });
 
-      ["Jose", "Mario", "Raul"].forEach(function(name) {
+      ["Jose", "Mario", "Raul", "Customer"].forEach(function(name) {
         var container = document.getElementById("msgs-" + name);
         var msgs = byPerson[name];
         if (!msgs.length) {
@@ -329,8 +378,8 @@
         }
         var html = "";
         msgs.forEach(function(m) {
-          // outbound from system = incoming on contractor's phone
-          // inbound from contractor = outgoing on contractor's phone (they sent it)
+          // outbound from system = incoming on the phone
+          // inbound from that person = outgoing on their phone
           var isTheirs = m.direction === "inbound";
           var cls = isTheirs ? "bubble-outgoing" : "bubble-incoming";
           var jobTag = "Job #" + m.job_id + (m.customer_name ? " - " + m.customer_name : "");
@@ -346,7 +395,16 @@
         // Update status
         var statusEl = document.getElementById("status-" + name);
         var lastMsg = msgs[msgs.length - 1];
-        if (lastMsg.job_status === "contractor_confirmed" && lastMsg.direction === "inbound") {
+        if (name === "Customer") {
+          if (msgs.some(function(m2) { return m2.direction === "outbound"; })) {
+            statusEl.textContent = "notified";
+            statusEl.style.background = "#64d2ff"; statusEl.style.color = "#111";
+          }
+          if (lastMsg.direction === "inbound") {
+            statusEl.textContent = "replied";
+            statusEl.style.background = "#30d158"; statusEl.style.color = "#fff";
+          }
+        } else if (lastMsg.job_status === "contractor_confirmed" && lastMsg.direction === "inbound") {
           statusEl.textContent = "confirmed";
           statusEl.style.background = "#30d158"; statusEl.style.color = "#fff";
         } else if (msgs.some(function(m2) { return m2.direction === "outbound"; })) {

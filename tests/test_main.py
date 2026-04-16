@@ -493,6 +493,8 @@ class TestDashboard:
         assert resp.status_code == 200
         assert "Dash Customer" in resp.text
         assert "999 Elm St" in resp.text
+        assert 'id="phone-Customer"' in resp.text
+        assert "Live mode" in resp.text
 
     def test_dashboard_wrong_slug_returns_404(self, client):
         resp = client.get("/dash/wrong-slug")
@@ -528,3 +530,67 @@ class TestDashboard:
     def test_cancel_wrong_slug_returns_404(self, client):
         resp = client.post("/dash/wrong/cancel/1", follow_redirects=False)
         assert resp.status_code == 404
+
+    def test_dashboard_waiting_eta_status_is_active(self, client, conn, db):
+        job = db.create_job(
+            conn, "Waiting Customer", "+15556667777", "333 Waiting Way",
+            service_type="AC", issue_description="Waiting ETA",
+        )
+        db.update_job(conn, job["id"], status="accepted_waiting_eta", current_contractor="Jose")
+
+        resp = client.get("/dash/test-dash")
+
+        assert resp.status_code == 200
+        assert "accepted waiting eta" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Dry-run test endpoints
+# ---------------------------------------------------------------------------
+
+class TestDryRunEndpoints:
+
+    def test_customer_reply_requires_dry_run(self, client):
+        resp = client.post(
+            "/test/customer",
+            json={"body": "Can he come earlier?"},
+        )
+
+        assert resp.status_code == 403
+
+    @patch("main.dispatch.process_customer_reply")
+    def test_customer_reply_by_job_id(self, mock_customer_reply, monkeypatch, client, conn, db):
+        import main
+        monkeypatch.setattr(main.config, "DRY_RUN", True)
+
+        job = db.create_job(
+            conn, "Test Customer", "+15551234567", "444 Test St",
+            service_type="AC", issue_description="Test",
+        )
+
+        resp = client.post(
+            "/test/customer",
+            json={"job_id": job["id"], "body": "Can he come earlier?"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["job_id"] == job["id"]
+        mock_customer_reply.assert_called_once()
+        assert mock_customer_reply.call_args[0][2] == "+15551234567"
+        assert mock_customer_reply.call_args[0][3] == "Can he come earlier?"
+
+    def test_internal_customer_confirmation_scenario_fires(self, monkeypatch, client, conn, db):
+        import main
+        monkeypatch.setattr(main.config, "DRY_RUN", True)
+
+        resp = client.post("/test/scenario/internal_customer_confirmation")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        job = db.get_job(conn, data["job_id"])
+        assert job["customer_name"] == "Keith Test"
+        assert job["phone"] == "+15551234567"
+        assert job["address"] == "123 Test Street, Katy, TX 77493"

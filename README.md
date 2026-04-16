@@ -77,6 +77,27 @@ Open the dashboard at:
 python3.12 -c "from config import DASHBOARD_SLUG; print(f'http://localhost:8080/dash/{DASHBOARD_SLUG}')"
 ```
 
+The dashboard can run an internal end-to-end simulation without texting Eddie,
+contractors, or customers. In dry-run mode, fire the
+`internal_customer_confirmation` scenario, reply as `Jose`, `Mario`, or `Raul`,
+and reply as the `Customer` from the dashboard phone panels.
+
+Useful API calls for the same flow:
+
+```bash
+curl -X POST http://localhost:8080/test/clear
+curl -X POST http://localhost:8080/test/scenario/internal_customer_confirmation
+curl -X POST http://localhost:8080/test/reply \
+  -H "Content-Type: application/json" \
+  -d '{"contractor":"Jose","body":"yes"}'
+curl -X POST http://localhost:8080/test/reply \
+  -H "Content-Type: application/json" \
+  -d '{"contractor":"Jose","body":"5pm"}'
+curl -X POST http://localhost:8080/test/customer \
+  -H "Content-Type: application/json" \
+  -d '{"body":"Can he come earlier?"}'
+```
+
 ## Tests
 
 Run the normal test suite:
