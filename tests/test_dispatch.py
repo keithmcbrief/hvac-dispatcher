@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock, call
 
 import pytest
+from twilio.base.exceptions import TwilioRestException
 
 
 @pytest.fixture(autouse=True)
@@ -255,6 +256,39 @@ def test_reply_accepted_texts_customer(mock_sms, mock_classify, dispatch_module,
     notif = mock_sms.send_eddie_notification.call_args[0][0]
     assert "Customer text sent" in notif
     assert "Jose is confirmed for 5pm" in notif
+
+
+@patch("dispatch.classify_reply")
+@patch("dispatch.sms")
+def test_reply_accepted_reports_invalid_customer_phone(mock_sms, mock_classify, dispatch_module, db, conn):
+    """Customer SMS failures should include the Twilio reason in Eddie's Slack notice."""
+    mock_sms.send_sms.side_effect = TwilioRestException(
+        400,
+        "/Messages.json",
+        "Invalid 'To' Phone Number: +1510123XXXX",
+        code=21211,
+        method="POST",
+    )
+    mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
+    mock_classify.return_value = {
+        "intent": "accepted",
+        "time": "5pm",
+        "reason": None,
+        "condition": None,
+        "raw_text": "Yes 5pm",
+    }
+
+    job = _create_test_job(db, conn)
+    db.update_job(conn, job["id"], status="contacting_contractor", current_contractor="Jose")
+    job = db.get_job(conn, job["id"])
+
+    dispatch_module.process_contractor_reply(conn, job, "Jose", "Yes 5pm")
+
+    notif = mock_sms.send_eddie_notification.call_args[0][0]
+    assert "Customer text was NOT sent" in notif
+    assert "Twilio rejected the customer phone number as invalid" in notif
+    assert "error 21211" in notif
+    assert "Please contact the customer manually" in notif
 
 
 @patch("dispatch.classify_reply")

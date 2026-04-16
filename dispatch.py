@@ -151,6 +151,23 @@ def _build_customer_confirmation_sms(job, contractor_name: str, time_display: st
     )
 
 
+def _customer_sms_failure_reason(exc: Exception) -> str:
+    """Return a Slack-safe explanation for customer SMS send failures."""
+    code = getattr(exc, "code", None)
+    msg = (getattr(exc, "msg", "") or str(exc)).strip()
+
+    if code == 21211:
+        return "Twilio rejected the customer phone number as invalid (error 21211)."
+
+    if code:
+        return f"Twilio rejected the customer text (error {code}): {msg}"
+
+    if msg:
+        return f"Customer text send failed: {msg}"
+
+    return "Customer text send failed for an unknown reason."
+
+
 def _send_and_log(conn, job_id, contractor_name, phone, body):
     """Send SMS and log the outbound message. Returns the twilio SID."""
     try:
@@ -180,12 +197,12 @@ def _notify_eddie(conn, job_id, body):
     return sid
 
 
-def _notify_customer_confirmed(conn, job, contractor_name: str, time_display: str) -> tuple[bool, str]:
+def _notify_customer_confirmed(conn, job, contractor_name: str, time_display: str) -> tuple[bool, str, str | None]:
     """Text the customer with contractor confirmation details."""
     body = _build_customer_confirmation_sms(job, contractor_name, time_display)
     if not job["phone"]:
         logger.warning("No customer phone for job %s", job["id"])
-        return False, body
+        return False, body, "No customer phone number is available."
 
     try:
         sid = sms.send_sms(job["phone"], body)
@@ -193,10 +210,11 @@ def _notify_customer_confirmed(conn, job, contractor_name: str, time_display: st
             conn, job["id"], "outbound", body,
             contractor_name="Customer", twilio_sid=sid,
         )
-        return True, body
-    except Exception:
+        return True, body, None
+    except Exception as exc:
+        failure_reason = _customer_sms_failure_reason(exc)
         logger.exception("Failed to notify customer for job %s", job["id"])
-        return False, body
+        return False, body, failure_reason
 
 
 # ---------------------------------------------------------------------------
@@ -397,14 +415,17 @@ def _handle_accepted(conn, job, contractor_name, result):
 
     # Refresh job to get latest data after update
     job = db_module.get_job(conn, job["id"])
-    customer_sent, customer_body = _notify_customer_confirmed(
+    customer_sent, customer_body, customer_failure_reason = _notify_customer_confirmed(
         conn, job, contractor_name, time_display
     )
     summary = _build_eddie_summary(conn, job, contractor_name=contractor_name, time_display=time_display)
     customer_status = (
         f"Customer text sent:\n{customer_body}"
         if customer_sent
-        else f"Customer text was NOT sent. Please contact the customer manually:\n{customer_body}"
+        else (
+            f"Customer text was NOT sent: {customer_failure_reason}\n\n"
+            f"Please contact the customer manually:\n{customer_body}"
+        )
     )
     _notify_eddie(
         conn, job["id"],
