@@ -201,6 +201,8 @@ You should still watch Slack for customer replies, customer questions, contracto
 - The app does not automatically answer customer replies.
 - Customer replies are relayed to Slack exactly as received.
 - Slack receives full call visibility, including transcripts when Retell provides them.
+- Calls that are clearly not HVAC service, or that only include a city/state instead of a service address, are not dispatched to contractors.
+- Calls asking for Eddie, Eddy, or Edilberto directly are not dispatched to contractors. Eddie gets a direct SMS with the caller details instead.
 - Contractor phone numbers matter: routing depends on each contractor texting back from the phone number configured for them.
 - A contractor reply from a different number will not be recognized automatically.
 - If Retell does not collect an address, the call is not dispatched to contractors. You get a Slack notice instead.

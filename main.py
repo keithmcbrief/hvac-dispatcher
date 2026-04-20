@@ -76,6 +76,50 @@ TWIML_EMPTY = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 
 SKIP_SIGNATURE_VALIDATION = os.getenv("SKIP_SIGNATURE_VALIDATION", "").lower() in ("true", "1", "yes")
 
+_BLANKISH_VALUES = {"", "n/a", "na", "none", "null", "unknown", "not provided"}
+_HVAC_KEYWORDS = (
+    "ac",
+    "a/c",
+    "air conditioner",
+    "air conditioning",
+    "air handler",
+    "condenser",
+    "compressor",
+    "cooling",
+    "duct",
+    "evaporator",
+    "freon",
+    "furnace",
+    "heat",
+    "heater",
+    "heating",
+    "hvac",
+    "mini split",
+    "refrigerant",
+    "thermostat",
+    "unit",
+    "vent",
+)
+_NON_HVAC_KEYWORDS = (
+    "automobile",
+    "auto",
+    "car",
+    "chevrolet",
+    "dealer",
+    "dealership",
+    "trade in",
+    "trade-in",
+    "traded in",
+    "truck",
+    "vehicle",
+    "westside chevrolet",
+)
+_OWNER_MESSAGE_PATTERNS = (
+    r"\b(transfer|connect|speak|talk)\s+(to|with)\s+((mr\.?|mister)\s+)?(eddy|eddie|edilberto)\b",
+    r"\b(ask(ing)?|look(ing)?)\s+for\s+((mr\.?|mister)\s+)?(eddy|eddie|edilberto)\b",
+    r"\b(eddy|eddie|edilberto)\s+(berto|the owner)\b",
+)
+
 
 def _has_valid_retell_webhook_token(request: Request, path_token: str = "") -> bool:
     configured_token = config.RETELL_WEBHOOK_TOKEN
@@ -113,6 +157,253 @@ def _normalize_us_phone(phone: str) -> str:
     if digits:
         return f"+{digits}"
     return phone
+
+
+def _clean_text(value) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.lower() in _BLANKISH_VALUES:
+        return ""
+    return text
+
+
+def _is_truthy(value) -> bool:
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    return str(value).strip().lower() in ("true", "1", "yes", "y")
+
+
+def _is_falsey(value) -> bool:
+    if value is False:
+        return True
+    if value is True or value is None:
+        return False
+    return str(value).strip().lower() in ("false", "0", "no", "n")
+
+
+def _keyword_in_text(keyword: str, text: str) -> bool:
+    if not keyword:
+        return False
+    if re.search(r"\W", keyword):
+        return keyword in text
+    return bool(re.search(rf"\b{re.escape(keyword)}\b", text))
+
+
+def _has_keyword(text: str, keywords: tuple[str, ...]) -> bool:
+    lower = text.lower()
+    return any(_keyword_in_text(keyword, lower) for keyword in keywords)
+
+
+def _has_dispatchable_service_address(address) -> bool:
+    """Return True only for a usable service address, not just a city/state."""
+    cleaned = _clean_text(address)
+    if not cleaned:
+        return False
+    if re.fullmatch(
+        r"[A-Za-z .'-]+,?\s+(?:[A-Z]{2}|[A-Za-z]+)(?:\s+\d{5}(?:-\d{4})?)?",
+        cleaned,
+        re.IGNORECASE,
+    ):
+        return False
+    return bool(re.search(r"\b\d{1,6}\s+[A-Za-z]", cleaned))
+
+
+def _caller_transcript_text(transcript) -> str:
+    """Keep caller lines so the business greeting does not mask non-HVAC calls."""
+    cleaned = _clean_text(transcript)
+    if not cleaned:
+        return ""
+
+    caller_lines = []
+    for line in cleaned.splitlines():
+        if re.match(r"\s*(agent|assistant|kristi)\s*:", line, re.IGNORECASE):
+            continue
+        caller_lines.append(line)
+    return "\n".join(caller_lines)
+
+
+def _strip_speaker_prefix(text: str) -> str:
+    return re.sub(r"^\s*(user|caller|customer)\s*:\s*", "", text, flags=re.IGNORECASE).strip()
+
+
+def _truncate_text(text: str, max_chars: int = 360) -> str:
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars - 3].rstrip()}..."
+
+
+def _details_for_intent(service_type, issue_description, transcript, call_summary="") -> str:
+    structured_details = " ".join(
+        text
+        for text in (
+            _clean_text(service_type),
+            _clean_text(issue_description),
+            _clean_text(call_summary),
+        )
+        if text
+    )
+    caller_details = _caller_transcript_text(transcript)
+    return " ".join(text for text in (structured_details, caller_details) if text)
+
+
+def _is_owner_direct_request(service_type, issue_description, transcript, call_summary="") -> bool:
+    details = _details_for_intent(service_type, issue_description, transcript, call_summary)
+    return any(re.search(pattern, details, re.IGNORECASE) for pattern in _OWNER_MESSAGE_PATTERNS)
+
+
+def _brief_owner_summary(issue_description, transcript, call_summary="") -> str:
+    for candidate in (_clean_text(call_summary), _clean_text(issue_description)):
+        if candidate:
+            return _truncate_text(candidate)
+
+    return _brief_caller_details(transcript) or "Caller asked to speak with Eddie."
+
+
+def _brief_caller_details(transcript) -> str:
+    caller_lines = [
+        _strip_speaker_prefix(line)
+        for line in _caller_transcript_text(transcript).splitlines()
+        if _strip_speaker_prefix(line)
+    ]
+    return _truncate_text(" ".join(caller_lines))
+
+
+def _build_owner_direct_text(
+    customer_name,
+    phone,
+    service_type,
+    issue_description,
+    address,
+    transcript,
+    recording_url,
+    call_summary="",
+) -> str:
+    lines = [
+        "Caller asked for Eddie directly.",
+        f"Caller: {customer_name or 'Unknown'} ({phone or 'no phone'})",
+    ]
+    summary = _brief_owner_summary(issue_description, transcript, call_summary)
+    caller_details = _brief_caller_details(transcript)
+    lines.append(f"Summary: {summary}")
+    if caller_details and caller_details.lower() not in summary.lower():
+        lines.append(f"Caller said: {caller_details}")
+
+    if _clean_text(service_type):
+        lines.append(f"Info: {_truncate_text(_clean_text(service_type), 160)}")
+    if _clean_text(address):
+        lines.append(f"Location/address: {_truncate_text(_clean_text(address), 160)}")
+    if recording_url:
+        lines.append(f"Recording: {recording_url}")
+
+    return "\n".join(lines)
+
+
+def _send_owner_direct_text(
+    customer_name,
+    phone,
+    service_type,
+    issue_description,
+    address,
+    transcript,
+    recording_url,
+    call_summary="",
+) -> None:
+    body = _build_owner_direct_text(
+        customer_name,
+        phone,
+        service_type,
+        issue_description,
+        address,
+        transcript,
+        recording_url,
+        call_summary,
+    )
+    try:
+        sms.send_eddie_notification(body)
+    except Exception:
+        logger.exception("Failed to forward direct Eddie request by SMS")
+        sms.send_error_alert("Failed to forward a direct Eddie request by SMS.")
+
+
+def _non_dispatchable_reason(
+    service_type,
+    issue_description,
+    transcript,
+    call_summary="",
+) -> str | None:
+    """Catch clearly non-HVAC calls even when Retell marks them as a lead."""
+    structured_details = _details_for_intent(service_type, issue_description, "", call_summary)
+    details = _details_for_intent(service_type, issue_description, transcript, call_summary)
+    if not details:
+        return None
+
+    structured_has_non_hvac = _has_keyword(structured_details, _NON_HVAC_KEYWORDS)
+    structured_has_hvac = _has_keyword(structured_details, _HVAC_KEYWORDS)
+    has_hvac = _has_keyword(details, _HVAC_KEYWORDS)
+    has_non_hvac = _has_keyword(details, _NON_HVAC_KEYWORDS)
+
+    if structured_has_non_hvac and not structured_has_hvac:
+        return "not HVAC service"
+    if has_non_hvac and not has_hvac:
+        return "not HVAC service"
+    return None
+
+
+def _lead_status_skip_reason(lead_status) -> str | None:
+    status = _clean_text(lead_status).lower().replace("-", "_").replace(" ", "_")
+    if not status:
+        return None
+    if status in ("qualified_service_lead", "qualified_lead", "service_lead"):
+        return None
+    if status in ("not_a_lead", "not_lead", "non_lead"):
+        return "not a lead"
+    if status in ("needs_human_review", "human_review", "unclear", "unknown"):
+        return "needs human review"
+    return None
+
+
+def _dispatch_skip_reason(
+    *,
+    is_lead,
+    lead_status,
+    hvac_service_request,
+    dispatch_allowed,
+    service_type,
+    issue_description,
+    transcript,
+    call_summary,
+    address,
+) -> str | None:
+    if _is_falsey(is_lead):
+        return "not a lead"
+
+    lead_status_reason = _lead_status_skip_reason(lead_status)
+    if lead_status_reason:
+        return lead_status_reason
+
+    if _is_falsey(hvac_service_request):
+        return "not HVAC service"
+
+    non_dispatchable_reason = _non_dispatchable_reason(
+        service_type,
+        issue_description,
+        transcript,
+        call_summary,
+    )
+    if non_dispatchable_reason:
+        return non_dispatchable_reason
+
+    if not _has_dispatchable_service_address(address):
+        return "no service address provided"
+
+    if _is_falsey(dispatch_allowed):
+        return "dispatch not allowed"
+
+    return None
 
 
 def _retell_payload_sources(data: dict) -> tuple[str, dict, dict, dict, tuple[dict, ...]]:
@@ -269,6 +560,15 @@ async def webhook_retell(request: Request, webhook_token: str = ""):
     retell_call_id = _extract("call_id", default="")
     transcript = _extract("transcript", default="")
     recording_url = _extract("recording_url", default="")
+    call_summary = _extract("call_summary", default="")
+    hvac_service_request = _extract_from_sources(sources, "hvac_service_request", default=None)
+    lead_status = _extract("lead_status", default="")
+    owner_direct_request_value = _extract_from_sources(sources, "owner_direct_request", default=False)
+    dispatch_allowed = _extract_from_sources(sources, "dispatch_allowed", default=None)
+
+    # Normalize phone before any skip/forward path so Eddie gets a usable number.
+    if phone and not phone.startswith("+"):
+        phone = _normalize_us_phone(phone)
 
     if event_type and event_type != "call_analyzed" and not address:
         logger.info(
@@ -286,31 +586,56 @@ async def webhook_retell(request: Request, webhook_token: str = ""):
     raw_urgency = _extract("urgency", "priority", default="normal")
     priority = "emergency" if raw_urgency.lower() in ("emergency", "urgent", "asap") else "normal"
 
-    # Spam filter: skip dispatch if no address, but always notify Eddie
+    # Spam and safety filters: skip dispatch if this is not a real HVAC service
+    # request or Retell only captured a city/state instead of a service address.
     is_lead = _extract_from_sources(sources, "is_lead", default=True)
-    is_not_lead = (
-        is_lead is False
-        or (isinstance(is_lead, str) and is_lead.lower() in ("false", "0", "no"))
-    )
-    if is_not_lead or not address:
-        logger.info("Skipping non-lead/spam call: %s", retell_call_id)
-        reason = "no address provided" if not address else "not a lead"
-        recording_line = f"\n🔊 Recording: {recording_url}" if recording_url else ""
-        transcript_block = slack_module.format_transcript_for_slack(transcript)
-        slack_module.send_slack_message(
-            f"⚠️ Call received but NOT dispatched ({reason})\n\n"
-            f"Customer: {customer_name or 'Unknown'} ({phone or 'no phone'})\n"
-            f"Service: {service_type or 'N/A'}\n"
-            f"Issue: {issue_description or 'N/A'}\n"
-            f"Address: {address or 'NOT PROVIDED'}"
-            f"{recording_line}"
-            f"{transcript_block}"
+    skip_reason = None
+    owner_direct_request = _is_owner_direct_request(
+        service_type,
+        issue_description,
+        transcript,
+        call_summary,
+    ) or _is_truthy(owner_direct_request_value)
+    if owner_direct_request:
+        _send_owner_direct_text(
+            customer_name,
+            phone,
+            service_type,
+            issue_description,
+            address,
+            transcript,
+            recording_url,
+            call_summary,
         )
-        return {"status": "skipped", "reason": reason}
+        skip_reason = "not a lead"
+    else:
+        skip_reason = _dispatch_skip_reason(
+            is_lead=is_lead,
+            lead_status=lead_status,
+            hvac_service_request=hvac_service_request,
+            dispatch_allowed=dispatch_allowed,
+            service_type=service_type,
+            issue_description=issue_description,
+            transcript=transcript,
+            call_summary=call_summary,
+            address=address,
+        )
 
-    # Normalize phone: ensure it starts with +
-    if phone and not phone.startswith("+"):
-        phone = _normalize_us_phone(phone)
+    if skip_reason:
+        logger.info("Skipping non-lead/spam call: %s", retell_call_id)
+        if not owner_direct_request:
+            recording_line = f"\n🔊 Recording: {recording_url}" if recording_url else ""
+            transcript_block = slack_module.format_transcript_for_slack(transcript)
+            slack_module.send_slack_message(
+                f"⚠️ Call received but NOT dispatched ({skip_reason})\n\n"
+                f"Customer: {customer_name or 'Unknown'} ({phone or 'no phone'})\n"
+                f"Service: {service_type or 'N/A'}\n"
+                f"Issue: {issue_description or 'N/A'}\n"
+                f"Address: {address or 'NOT PROVIDED'}"
+                f"{recording_line}"
+                f"{transcript_block}"
+            )
+        return {"status": "skipped", "reason": skip_reason}
 
     conn = db_module.get_connection()
     try:
@@ -421,7 +746,12 @@ async def webhook_twilio(request: Request):
                 job = db_module.get_most_recent_active_job(conn)
 
             command_upper = command.upper().strip()
-            if command_upper in ("OK", "NEXT", "URGENT", "CANCEL"):
+            if command_upper in (
+                "OK",
+                "NEXT",
+                "URGENT",
+                "CANCEL",
+            ):
                 if job:
                     dispatch.process_eddie_command(conn, job, command_upper)
             else:
@@ -453,7 +783,10 @@ async def webhook_twilio(request: Request):
 async def webhook_slack(request: Request):
     """Handle Slack Events API messages (Eddie's commands)."""
     body_bytes = await request.body()
-    data = json.loads(body_bytes)
+    try:
+        data = json.loads(body_bytes)
+    except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"error": "Invalid Slack payload"})
 
     # Slack URL verification challenge (one-time setup)
     if data.get("type") == "url_verification":
@@ -489,7 +822,12 @@ async def webhook_slack(request: Request):
             job = db_module.get_most_recent_active_job(conn)
 
         command_upper = command.upper().strip()
-        if command_upper in ("OK", "NEXT", "URGENT", "CANCEL") and job:
+        if command_upper in (
+            "OK",
+            "NEXT",
+            "URGENT",
+            "CANCEL",
+        ) and job:
             dispatch.process_eddie_command(conn, job, command_upper)
             return {"status": "ok", "job_id": job["id"], "command": command_upper}
 
@@ -626,14 +964,11 @@ async def fire_scenario(name: str):
     call_analysis = call_data.get("call_analysis", {})
     custom = call_analysis.get("custom_analysis_data", {})
     dynamic_vars = call_data.get("retell_llm_dynamic_variables", {})
+    sources = (custom, dynamic_vars, call_analysis, call_data, data)
 
     def _extract(*fields, default=""):
-        for field in fields:
-            for source in (custom, dynamic_vars, call_analysis, call_data, data):
-                val = source.get(field)
-                if val:
-                    return str(val) if val is not None else val
-        return default
+        val = _extract_from_sources(sources, *fields, default=default)
+        return str(val) if val is not None else val
 
     customer_name = _extract("caller_name", "customer_name")
     phone = _extract("caller_phone", "phone", "from_number")
@@ -641,16 +976,54 @@ async def fire_scenario(name: str):
     service_type = _extract("service_needed", "service_type", default=None)
     issue_description = _extract("Issue_description", "issue_description", default=None)
     retell_call_id = call_data.get("call_id") or data.get("call_id", "")
+    transcript = _extract("transcript", default="")
+    call_summary = _extract("call_summary", default="")
+    hvac_service_request = _extract_from_sources(sources, "hvac_service_request", default=None)
+    lead_status = _extract("lead_status", default="")
+    owner_direct_request_value = _extract_from_sources(sources, "owner_direct_request", default=False)
+    dispatch_allowed = _extract_from_sources(sources, "dispatch_allowed", default=None)
 
     raw_urgency = _extract("urgency", "priority", default="normal")
     priority = "emergency" if raw_urgency.lower() in ("emergency", "urgent", "asap") else "normal"
 
-    is_lead = custom.get("is_lead", True)
-    if is_lead is False or not address:
-        return {"status": "skipped", "reason": "not a lead", "scenario": name}
-
     if phone and not phone.startswith("+"):
         phone = _normalize_us_phone(phone)
+
+    is_lead = custom.get("is_lead", True)
+    skip_reason = None
+    owner_direct_request = _is_owner_direct_request(
+        service_type,
+        issue_description,
+        transcript,
+        call_summary,
+    ) or _is_truthy(owner_direct_request_value)
+    if owner_direct_request:
+        _send_owner_direct_text(
+            customer_name,
+            phone,
+            service_type,
+            issue_description,
+            address,
+            transcript,
+            "",
+            call_summary,
+        )
+        skip_reason = "not a lead"
+    else:
+        skip_reason = _dispatch_skip_reason(
+            is_lead=is_lead,
+            lead_status=lead_status,
+            hvac_service_request=hvac_service_request,
+            dispatch_allowed=dispatch_allowed,
+            service_type=service_type,
+            issue_description=issue_description,
+            transcript=transcript,
+            call_summary=call_summary,
+            address=address,
+        )
+
+    if skip_reason:
+        return {"status": "skipped", "reason": skip_reason, "scenario": name}
 
     conn = db_module.get_connection()
     try:

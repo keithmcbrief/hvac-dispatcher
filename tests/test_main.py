@@ -318,6 +318,157 @@ class TestRetellWebhook:
         assert resp.json()["status"] == "ok"
         mock_dispatch.assert_called_once()
 
+    @patch("main.sms.send_eddie_notification")
+    @patch("main.slack_module.send_slack_message")
+    @patch("main.dispatch.start_dispatch")
+    @patch("main.sms.validate_retell_signature", return_value=True)
+    def test_owner_vehicle_quote_call_is_forwarded_to_eddie_not_dispatched(
+        self, mock_validate, mock_dispatch, mock_slack, mock_eddie_sms, client, conn, db
+    ):
+        payload = {
+            "event": "call_analyzed",
+            "call": {
+                "call_id": "retell-vehicle-quote",
+                "transcript": (
+                    "Agent: Hi this is Kristi with Residential AC & Heating, how can I help you today?\n"
+                    "User: Transfer to mister Eddie Berto.\n"
+                    "User: Diego from Westside Chevrolet.\n"
+                    "User: He just purchased for me a vehicle, so I need just to get a quote for the vehicle that he traded in."
+                ),
+                "call_analysis": {
+                    "custom_analysis_data": {
+                        "caller_name": "Diego",
+                        "caller_phone": "+18137090266",
+                        "service_address": "Katy, Texas",
+                        "service_needed": "Vehicle trade-in quote",
+                        "Issue_description": "Diego needs a quote for the vehicle he traded in.",
+                        "is_lead": False,
+                        "hvac_service_request": False,
+                        "lead_status": "not_a_lead",
+                        "owner_direct_request": True,
+                        "dispatch_allowed": False,
+                    },
+                },
+            },
+        }
+        body = json.dumps(payload).encode()
+
+        resp = client.post(
+            "/webhook/retell",
+            content=body,
+            headers={"x-retell-signature": "sig"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "skipped", "reason": "not a lead"}
+        mock_dispatch.assert_not_called()
+        mock_slack.assert_not_called()
+        mock_eddie_sms.assert_called_once()
+        forwarded_text = mock_eddie_sms.call_args[0][0]
+        assert "Caller asked for Eddie directly" in forwarded_text
+        assert "Diego (+18137090266)" in forwarded_text
+        assert "vehicle" in forwarded_text.lower()
+        assert "Westside Chevrolet" in forwarded_text
+        assert db.get_recent_jobs(conn) == []
+
+    @patch("main.slack_module.send_slack_message")
+    @patch("main.dispatch.start_dispatch")
+    @patch("main.sms.validate_retell_signature", return_value=True)
+    def test_retell_dispatch_allowed_false_blocks_contractor_dispatch(
+        self, mock_validate, mock_dispatch, mock_slack, client, conn, db
+    ):
+        payload = {
+            "event": "call_analyzed",
+            "call": {
+                "call_id": "retell-dispatch-false",
+                "transcript": "User: My AC needs repair.",
+                "call_analysis": {
+                    "custom_analysis_data": {
+                        "caller_name": "Review Caller",
+                        "caller_phone": "+15551234567",
+                        "service_address": "123 Main St, Katy, TX 77493",
+                        "service_needed": "AC Repair",
+                        "Issue_description": "AC is not cooling.",
+                        "is_lead": True,
+                        "hvac_service_request": True,
+                        "lead_status": "qualified_service_lead",
+                        "owner_direct_request": False,
+                        "dispatch_allowed": False,
+                    },
+                },
+            },
+        }
+        body = json.dumps(payload).encode()
+
+        resp = client.post(
+            "/webhook/retell",
+            content=body,
+            headers={"x-retell-signature": "sig"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "skipped", "reason": "dispatch not allowed"}
+        mock_dispatch.assert_not_called()
+        mock_slack.assert_called_once()
+        assert db.get_recent_jobs(conn) == []
+
+    @patch("main.sms.send_eddie_notification")
+    @patch("main.dispatch.start_dispatch")
+    @patch("main.sms.validate_retell_signature", return_value=True)
+    def test_edilberto_direct_request_is_not_dispatched(
+        self, mock_validate, mock_dispatch, mock_eddie_sms, client, conn, db
+    ):
+        payload = {
+            "call_id": "retell-edilberto-direct",
+            "customer_name": "Maria",
+            "phone": "4805551212",
+            "address": "123 Main St",
+            "service_type": "AC Repair",
+            "issue_description": "Caller is looking for Edilberto about billing.",
+            "transcript": "User: Can I speak to Eddy? I am looking for Edilberto.",
+        }
+        body = json.dumps(payload).encode()
+
+        resp = client.post(
+            "/webhook/retell",
+            content=body,
+            headers={"x-retell-signature": "sig"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "skipped", "reason": "not a lead"}
+        mock_dispatch.assert_not_called()
+        mock_eddie_sms.assert_called_once()
+        assert "Maria (+14805551212)" in mock_eddie_sms.call_args[0][0]
+        assert db.get_recent_jobs(conn) == []
+
+    @patch("main.slack_module.send_slack_message")
+    @patch("main.dispatch.start_dispatch")
+    @patch("main.sms.validate_retell_signature", return_value=True)
+    def test_city_only_address_is_not_dispatchable(
+        self, mock_validate, mock_dispatch, mock_slack, client
+    ):
+        payload = {
+            "call_id": "retell-city-only",
+            "customer_name": "City Caller",
+            "phone": "+15551234567",
+            "address": "Katy, TX 77493",
+            "service_type": "AC Repair",
+            "issue_description": "Unit not cooling",
+        }
+        body = json.dumps(payload).encode()
+
+        resp = client.post(
+            "/webhook/retell",
+            content=body,
+            headers={"x-retell-signature": "sig"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "skipped", "reason": "no service address provided"}
+        mock_dispatch.assert_not_called()
+        mock_slack.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # /webhook/twilio
