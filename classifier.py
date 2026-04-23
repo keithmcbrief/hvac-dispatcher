@@ -1,8 +1,9 @@
 """Reply classifier for HVAC contractor text messages.
 
-Two-tier classification:
+Three-tier classification:
   Tier 1 — Regex for obvious yes/no replies (no LLM call).
-  Tier 2 — GPT-4o-mini for everything else.
+  Tier 2 — Regex for common natural-language replies.
+  Tier 3 — GPT-4o-mini for everything else.
 """
 
 import json
@@ -27,7 +28,34 @@ _NO_PATTERNS: list[re.Pattern] = [
     re.compile(r"^\s*[👎❌]+\s*$"),
 ]
 
-# ── Tier 2 system prompt ────────────────────────────────────────────────
+_CONDITIONAL_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\b(only if|if no one else|depends on|maybe,?\s+if|could but|can if|will if)\b", re.IGNORECASE),
+]
+
+_DECLINE_PATTERNS: list[re.Pattern] = [
+    re.compile(
+        r"\b(nah|no sorry|no way|sorry\s+can'?t|can'?t\b|cannot\b|booked solid|swamped|not gonna make it|try someone else)\b",
+        re.IGNORECASE,
+    ),
+]
+
+_ACCEPTANCE_PATTERNS: list[re.Pattern] = [
+    re.compile(
+        r"\b(yeah|yep|yes|sure thing|sure|i'?ll take it|i can do it|can be there|count me in|heading over|on my way|on the way)\b",
+        re.IGNORECASE,
+    ),
+]
+
+_TIME_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\b(?:tmrw|tomorrow)\s+(?:at\s+)?(?:around\s+)?\d{1,2}(?::\d{2})?\s*(?:ish|am|pm)?\b", re.IGNORECASE),
+    re.compile(r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(?:morning|afternoon|evening|night|after lunch|before lunch|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b", re.IGNORECASE),
+    re.compile(r"\bby\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", re.IGNORECASE),
+    re.compile(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", re.IGNORECASE),
+    re.compile(r"\bheading over now\b", re.IGNORECASE),
+    re.compile(r"\b(on my way|on the way)\b", re.IGNORECASE),
+]
+
+# ── Tier 3 system prompt ────────────────────────────────────────────────
 
 _SYSTEM_PROMPT = (
     "You are classifying a text message from an HVAC contractor responding to a job request.\n"
@@ -67,7 +95,11 @@ def classify_reply(text: str) -> dict:
         if pat.match(stripped):
             return _result("declined", raw_text=text)
 
-    # Tier 2: LLM classification
+    deterministic = _classify_with_regex(text)
+    if deterministic is not None:
+        return deterministic
+
+    # Tier 3: LLM classification
     return _classify_with_llm(text)
 
 
@@ -88,6 +120,45 @@ def _result(
         "condition": condition,
         "raw_text": raw_text,
     }
+
+
+def _classify_with_regex(text: str) -> dict | None:
+    """Classify common contractor replies without depending on the LLM."""
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    for pat in _CONDITIONAL_PATTERNS:
+        if pat.search(stripped):
+            return _result("conditional", condition=stripped, raw_text=text)
+
+    for pat in _DECLINE_PATTERNS:
+        if pat.search(stripped):
+            return _result("declined", reason=stripped, raw_text=text)
+
+    for pat in _ACCEPTANCE_PATTERNS:
+        if pat.search(stripped):
+            time = _extract_time(stripped)
+            if time:
+                return _result("accepted", time=time, raw_text=text)
+
+    return None
+
+
+def _extract_time(text: str) -> str | None:
+    for pat in _TIME_PATTERNS:
+        match = pat.search(text)
+        if not match:
+            continue
+
+        value = match.group(0).strip()
+        if value.lower() == "heading over now":
+            return "on the way"
+        if value.lower().startswith("by "):
+            return value[3:].strip()
+        return value
+
+    return None
 
 
 def _classify_with_llm(text: str) -> dict:

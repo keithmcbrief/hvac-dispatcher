@@ -163,6 +163,8 @@ def test_start_dispatch_texts_jose_even_if_busy(mock_sms, dispatch_module, db, c
     # Should still text Jose (priority 1, always first)
     call_args = mock_sms.send_sms.call_args
     assert call_args[0][0] == "+15550001111"  # Jose's phone
+    assert "Reply YES + ETA" in call_args[0][1]
+    assert "or NO" in call_args[0][1]
 
     updated = db.get_job(conn, job["id"])
     assert updated["current_contractor"] == "Jose"
@@ -318,7 +320,8 @@ def test_reply_accepted_without_eta_requests_eta(mock_sms, mock_classify, dispat
 
     mock_sms.send_sms.assert_called_once()
     assert mock_sms.send_sms.call_args[0][0] == "+15550001111"
-    assert "What time can you arrive" in mock_sms.send_sms.call_args[0][1]
+    assert "Reply with ETA only" in mock_sms.send_sms.call_args[0][1]
+    assert "3-4pm" in mock_sms.send_sms.call_args[0][1]
     assert "+15551234567" not in [c[0][0] for c in mock_sms.send_sms.call_args_list]
 
     notif = mock_sms.send_eddie_notification.call_args[0][0]
@@ -359,6 +362,73 @@ def test_reply_waiting_for_eta_accepts_time_only(mock_sms, mock_classify, dispat
         c for c in mock_sms.send_sms.call_args_list if c[0][0] == "+15551234567"
     ]
     assert len(customer_calls) == 1
+
+
+@patch("dispatch.classify_reply")
+@patch("dispatch.sms")
+def test_jose_waiting_for_eta_accepts_between_3_and_4(mock_sms, mock_classify, dispatch_module, db, conn):
+    """Jose's exact ETA-only reply should confirm and text the customer."""
+    mock_sms.send_sms.return_value = "SM_TEST_SID"
+    mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
+    mock_classify.return_value = {
+        "intent": "unclear",
+        "time": None,
+        "reason": None,
+        "condition": None,
+        "raw_text": "Between 3 and 4",
+    }
+
+    job = _create_test_job(db, conn)
+    db.update_job(
+        conn,
+        job["id"],
+        status="accepted_waiting_eta",
+        current_contractor="Jose",
+        contractor_response="yes",
+    )
+    job = db.get_job(conn, job["id"])
+
+    dispatch_module.process_contractor_reply(conn, job, "Jose", "Between 3 and 4")
+
+    updated = db.get_job(conn, job["id"])
+    assert updated["status"] == "contractor_confirmed"
+    assert updated["current_contractor"] == "Jose"
+    assert updated["confirmed_time"] == "Between 3 and 4"
+    customer_calls = [
+        c for c in mock_sms.send_sms.call_args_list if c[0][0] == "+15551234567"
+    ]
+    assert len(customer_calls) == 1
+    assert "Between 3 and 4" in customer_calls[0][0][1]
+
+
+@patch("dispatch.classify_reply")
+@patch("dispatch.sms")
+def test_reply_unclear_yes_with_eta_confirms(mock_sms, mock_classify, dispatch_module, db, conn):
+    """A clear YES + ETA reply should confirm even if the classifier returns unclear."""
+    mock_sms.send_sms.return_value = "SM_TEST_SID"
+    mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
+    mock_classify.return_value = {
+        "intent": "unclear",
+        "time": None,
+        "reason": None,
+        "condition": None,
+        "raw_text": "YES 3-4pm",
+    }
+
+    job = _create_test_job(db, conn)
+    db.update_job(conn, job["id"], status="contacting_contractor", current_contractor="Jose")
+    job = db.get_job(conn, job["id"])
+
+    dispatch_module.process_contractor_reply(conn, job, "Jose", "YES 3-4pm")
+
+    updated = db.get_job(conn, job["id"])
+    assert updated["status"] == "contractor_confirmed"
+    assert updated["confirmed_time"] == "3-4pm"
+    customer_calls = [
+        c for c in mock_sms.send_sms.call_args_list if c[0][0] == "+15551234567"
+    ]
+    assert len(customer_calls) == 1
+    assert "Jose is confirmed for 3-4pm" in customer_calls[0][0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -714,6 +784,34 @@ def test_eddie_command_cancel(mock_sms, dispatch_module, db, conn):
 
     mock_sms.send_eddie_notification.assert_called_once()
     assert "cancelled" in mock_sms.send_eddie_notification.call_args[0][0]
+
+
+@patch("dispatch.sms")
+def test_eddie_command_eta_confirms_waiting_job(mock_sms, dispatch_module, db, conn):
+    """ETA command should confirm a job that is waiting on ETA."""
+    mock_sms.send_sms.return_value = "SM_TEST_SID"
+    mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
+
+    job = _create_test_job(db, conn)
+    db.update_job(
+        conn,
+        job["id"],
+        status="accepted_waiting_eta",
+        current_contractor="Jose",
+        contractor_response="yes",
+    )
+    job = db.get_job(conn, job["id"])
+
+    dispatch_module.process_eddie_command(conn, job, "ETA 3-4pm")
+
+    updated = db.get_job(conn, job["id"])
+    assert updated["status"] == "contractor_confirmed"
+    assert updated["confirmed_time"] == "3-4pm"
+    customer_calls = [
+        c for c in mock_sms.send_sms.call_args_list if c[0][0] == "+15551234567"
+    ]
+    assert len(customer_calls) == 1
+    assert "Jose is confirmed for 3-4pm" in customer_calls[0][0][1]
 
 
 # ---------------------------------------------------------------------------

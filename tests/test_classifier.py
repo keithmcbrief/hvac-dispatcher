@@ -90,20 +90,26 @@ def test_regex_declines_obvious_no(text):
     assert result["raw_text"] == text
 
 
-# ── Tier 1: should NOT match (falls through to LLM) ─────────────────────
+# ── Tier 2: common natural-language replies ─────────────────────────────
 
 @pytest.mark.parametrize(
-    "text",
+    "text, expected_intent, expected_field",
     [
-        "yes I can be there at 2pm",
-        "no sorry man got another job lined up",
-        "only if before 5pm",
-        "what address again?",
-        "lol",
+        ("yes I can be there at 2pm", "accepted", "time"),
+        ("no sorry man got another job lined up", "declined", "reason"),
+        ("only if before 5pm", "conditional", "condition"),
     ],
 )
-def test_regex_does_not_match_complex_texts(text):
-    """Complex texts should NOT be caught by regex; they go to the LLM."""
+def test_regex_classifies_common_complex_texts(text, expected_intent, expected_field):
+    result = classify_reply(text)
+    assert result["intent"] == expected_intent
+    assert result[expected_field] is not None
+    assert result["raw_text"] == text
+
+
+@pytest.mark.parametrize("text", ["what address again?", "lol"])
+def test_regex_does_not_match_unclear_texts(text):
+    """Unclear texts should still fall through to the LLM."""
     with patch("classifier._classify_with_llm") as mock_llm:
         mock_llm.return_value = {
             "intent": "unclear",
@@ -136,7 +142,7 @@ def test_llm_declined_with_reason():
     with patch("classifier.openai.OpenAI") as MockClient:
         instance = MockClient.return_value
         instance.chat.completions.create.return_value = _mock_openai_response(payload)
-        result = classify_reply("nah man I got another job lined up")
+        result = classify_reply("unable to take this one")
         assert result["intent"] == "declined"
         assert result["reason"] == "got another job"
 
@@ -148,7 +154,7 @@ def test_llm_conditional():
     with patch("classifier.openai.OpenAI") as MockClient:
         instance = MockClient.return_value
         instance.chat.completions.create.return_value = _mock_openai_response(payload)
-        result = classify_reply("only if its before 5pm")
+        result = classify_reply("there are some constraints")
         assert result["intent"] == "conditional"
         assert result["condition"] == "only if before 5pm"
 
@@ -170,9 +176,9 @@ def test_openai_error_returns_unclear():
     with patch("classifier.openai.OpenAI") as MockClient:
         instance = MockClient.return_value
         instance.chat.completions.create.side_effect = openai.APIConnectionError(request=MagicMock())
-        result = classify_reply("yeah tmrw around 2ish")
+        result = classify_reply("checking my schedule")
         assert result["intent"] == "unclear"
-        assert result["raw_text"] == "yeah tmrw around 2ish"
+        assert result["raw_text"] == "checking my schedule"
 
 
 # ── Error handling: timeout → unclear ────────────────────────────────────
@@ -181,7 +187,7 @@ def test_openai_timeout_returns_unclear():
     with patch("classifier.openai.OpenAI") as MockClient:
         instance = MockClient.return_value
         instance.chat.completions.create.side_effect = openai.APITimeoutError(request=MagicMock())
-        result = classify_reply("can be there wednesday morning")
+        result = classify_reply("let me check")
         assert result["intent"] == "unclear"
 
 

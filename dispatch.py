@@ -18,6 +18,8 @@ from classifier import classify_reply
 logger = logging.getLogger(__name__)
 
 _last_heartbeat_alert_at: datetime | None = None
+_EDDIE_CORE_COMMANDS = {"OK", "NEXT", "URGENT", "CANCEL"}
+_EDDIE_ETA_COMMAND_RE = re.compile(r"^ETA\s+(.+)$", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +97,25 @@ def _build_job_sms(job) -> str:
     lines.append(f"Customer: {job['customer_name'] or 'N/A'}")
     lines.append(f"Issue: {job['issue_description'] or 'N/A'}")
     lines.append("")
-    lines.append("When can you be there?")
+    lines.append(_contractor_reply_instructions())
     return "\n".join(lines)
+
+
+def _contractor_reply_instructions() -> str:
+    return 'Reply YES + ETA (example: YES 3-4pm or YES in 45 min), or NO.'
+
+
+def _looks_like_acceptance(text: str) -> bool:
+    lower = (text or "").strip().lower()
+    if not lower:
+        return False
+
+    if re.search(r"^\s*(yes|yeah|yep|yea|ya|ok|okay|sure|sounds good|i'?m in|on it)\b", lower):
+        return True
+
+    return bool(
+        re.search(r"\b(omw|on my way|on the way|heading (over|there|out)|en route)\b", lower)
+    )
 
 
 def _eta_from_reply_text(text: str) -> str | None:
@@ -109,16 +128,34 @@ def _eta_from_reply_text(text: str) -> str | None:
     if re.search(r"\b(omw|on my way|on the way|heading (over|there|out)|en route)\b", lower):
         return "on the way"
 
-    if re.search(r"\b(1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(am|pm)\b", lower):
-        return stripped
+    match = re.search(
+        r"\bbetween\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+(?:and|to)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b",
+        lower,
+    )
+    if match:
+        return stripped[match.start():match.end()]
 
-    if re.search(r"\b(in|about|around)\s+\d+\s*(min|mins|minutes|hour|hours|hr|hrs)\b", lower):
-        return stripped
+    match = re.search(
+        r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b",
+        lower,
+    )
+    if match:
+        return stripped[match.start():match.end()]
 
-    if re.search(r"\b(today|tomorrow|tonight)\b", lower) and re.search(
-        r"\b(morning|afternoon|evening|night|noon|[1-9]|1[0-2])\b", lower
-    ):
-        return stripped
+    match = re.search(r"\b(1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(am|pm)\b", lower)
+    if match:
+        return stripped[match.start():match.end()]
+
+    match = re.search(r"\b(in|about|around)\s+\d+\s*(min|mins|minutes|hour|hours|hr|hrs)\b", lower)
+    if match:
+        return stripped[match.start():match.end()]
+
+    match = re.search(
+        r"\b(today|tomorrow|tonight)\b.*?\b(morning|afternoon|evening|night|noon|[1-9]|1[0-2])\b",
+        lower,
+    )
+    if match:
+        return stripped[match.start():match.end()]
 
     return None
 
@@ -131,10 +168,25 @@ def _confirmed_time_from_result(result: dict) -> str | None:
     return _eta_from_reply_text(result.get("raw_text", ""))
 
 
+def _manual_eta_from_command(command: str) -> str | None:
+    match = _EDDIE_ETA_COMMAND_RE.match((command or "").strip())
+    if not match:
+        return None
+    eta = match.group(1).strip()
+    return eta or None
+
+
+def is_supported_eddie_command(command: str) -> bool:
+    stripped = (command or "").strip()
+    if not stripped:
+        return False
+    return stripped.upper() in _EDDIE_CORE_COMMANDS or _manual_eta_from_command(stripped) is not None
+
+
 def _build_eta_request_sms(job) -> str:
     return (
-        f"Thanks. What time can you arrive for Job #{job['id']}? "
-        'Please reply with an ETA like "5pm" or "in 45 minutes".'
+        f"Thanks. Reply with ETA only for Job #{job['id']} "
+        '(example: 3-4pm, 5pm, or in 45 min).'
     )
 
 
@@ -324,8 +376,8 @@ def process_contractor_reply(conn, job, contractor_name, reply_text, twilio_mess
         return
 
     result = classify_reply(reply_text)
+    eta = result.get("time") or _eta_from_reply_text(reply_text)
     if job["status"] == "accepted_waiting_eta":
-        eta = result.get("time") or _eta_from_reply_text(reply_text)
         if eta:
             result = {
                 **result,
@@ -333,6 +385,13 @@ def process_contractor_reply(conn, job, contractor_name, reply_text, twilio_mess
                 "time": eta,
                 "raw_text": reply_text,
             }
+    elif result["intent"] == "unclear" and eta and _looks_like_acceptance(reply_text):
+        result = {
+            **result,
+            "intent": "accepted",
+            "time": eta,
+            "raw_text": reply_text,
+        }
     intent = result["intent"]
 
     # Log inbound message (twilio_message_sid used for dedup in production)
@@ -402,13 +461,18 @@ def _handle_accepted(conn, job, contractor_name, result):
         _handle_accepted_missing_eta(conn, job, contractor_name, result)
         return
 
+    _confirm_job(conn, job, contractor_name, confirmed_time, result.get("raw_text", ""))
+
+
+def _confirm_job(conn, job, contractor_name, confirmed_time: str, contractor_response: str = ""):
+    """Persist a confirmation, notify the customer, and alert Eddie."""
     time_display = confirmed_time
 
     db_module.update_job(
         conn, job["id"],
         status="contractor_confirmed",
         current_contractor=contractor_name,
-        contractor_response=result.get("raw_text", ""),
+        contractor_response=contractor_response,
         confirmed_time=confirmed_time,
         next_action_at=None,
     )
@@ -578,7 +642,7 @@ def process_follow_up(conn, job):
     if attempt < config.MAX_ATTEMPTS_PER_CONTRACTOR:
         body = (
             f"Following up on Job #{job['id']}: {job['service_type']} at "
-            f"{job['address']}. Can you make it?"
+            f"{job['address']}. {_contractor_reply_instructions()}"
         )
 
         if job["priority"] == "emergency":
@@ -712,10 +776,11 @@ def upgrade_to_emergency(conn, job):
 # ---------------------------------------------------------------------------
 
 def process_eddie_command(conn, job, command):
-    """Process a command from Eddie: OK, NEXT, URGENT, CANCEL."""
-    command = command.upper().strip()
+    """Process a command from Eddie: OK, NEXT, URGENT, CANCEL, ETA <time>."""
+    command = (command or "").strip()
+    command_upper = command.upper()
 
-    if command == "OK":
+    if command_upper == "OK":
         if job["status"] == "conditional_pending":
             # Confirm the job as accepted
             contractor_name = job["current_contractor"]
@@ -736,16 +801,27 @@ def process_eddie_command(conn, job, command):
                 f"✓ CONFIRMED\n\n{summary}\n\nPlease contact the customer to confirm the appointment."
             )
 
-    elif command == "NEXT":
+    elif command_upper == "NEXT":
         if job["status"] in ("conditional_pending", "awaiting_reply", "accepted_waiting_eta"):
             escalate_to_next(conn, job)
 
-    elif command == "URGENT":
+    elif command_upper == "URGENT":
         upgrade_to_emergency(conn, job)
 
-    elif command == "CANCEL":
+    elif command_upper == "CANCEL":
         db_module.update_job(conn, job["id"], status="cancelled", next_action_at=None)
         _notify_eddie(conn, job["id"], f"Job #{job['id']} cancelled.")
+
+    else:
+        eta = _manual_eta_from_command(command)
+        if eta and job["status"] == "accepted_waiting_eta" and job["current_contractor"]:
+            _confirm_job(conn, job, job["current_contractor"], eta, contractor_response=eta)
+        elif eta:
+            _notify_eddie(
+                conn,
+                job["id"],
+                f"Job #{job['id']} is not waiting on a contractor ETA. ETA command ignored."
+            )
 
 
 # ---------------------------------------------------------------------------

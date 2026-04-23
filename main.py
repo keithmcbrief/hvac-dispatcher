@@ -745,19 +745,13 @@ async def webhook_twilio(request: Request):
                 command = text
                 job = db_module.get_most_recent_active_job(conn)
 
-            command_upper = command.upper().strip()
-            if command_upper in (
-                "OK",
-                "NEXT",
-                "URGENT",
-                "CANCEL",
-            ):
+            if dispatch.is_supported_eddie_command(command):
                 if job:
-                    dispatch.process_eddie_command(conn, job, command_upper)
+                    dispatch.process_eddie_command(conn, job, command)
             else:
                 sms.send_sms(
                     config.EDDIE_PHONE,
-                    "Commands: OK, NEXT, URGENT, CANCEL. Prefix with JOB-{id} to target a specific job.",
+                    "Commands: OK, NEXT, URGENT, CANCEL, ETA <time>. Prefix with JOB-{id} to target a specific job.",
                 )
 
         else:
@@ -821,15 +815,9 @@ async def webhook_slack(request: Request):
             command = text
             job = db_module.get_most_recent_active_job(conn)
 
-        command_upper = command.upper().strip()
-        if command_upper in (
-            "OK",
-            "NEXT",
-            "URGENT",
-            "CANCEL",
-        ) and job:
-            dispatch.process_eddie_command(conn, job, command_upper)
-            return {"status": "ok", "job_id": job["id"], "command": command_upper}
+        if dispatch.is_supported_eddie_command(command) and job:
+            dispatch.process_eddie_command(conn, job, command)
+            return {"status": "ok", "job_id": job["id"], "command": command}
 
         return {"status": "ignored", "reason": "not a command"}
     finally:

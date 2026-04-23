@@ -565,6 +565,24 @@ class TestTwilioWebhook:
 
     @patch("main.dispatch.process_eddie_command")
     @patch("main.sms.validate_twilio_signature", return_value=True)
+    def test_eddie_eta_command(self, mock_validate, mock_cmd, client, conn, db):
+        job = db.create_job(
+            conn, "Customer B", "+15552222222", "200 Oak Ave",
+            service_type="Heating", issue_description="No heat",
+        )
+        db.update_job(conn, job["id"], status="accepted_waiting_eta", current_contractor="Jose")
+
+        resp = client.post(
+            "/webhook/twilio",
+            data={"From": "+15550009999", "Body": "ETA 3-4pm", "MessageSid": "SM301"},
+            headers={"x-twilio-signature": "valid"},
+        )
+        assert resp.status_code == 200
+        mock_cmd.assert_called_once()
+        assert mock_cmd.call_args[0][2] == "ETA 3-4pm"
+
+    @patch("main.dispatch.process_eddie_command")
+    @patch("main.sms.validate_twilio_signature", return_value=True)
     def test_eddie_command_with_job_prefix(self, mock_validate, mock_cmd, client, conn, db):
         job = db.create_job(
             conn, "Customer C", "+15553333333", "300 Pine Rd",
@@ -596,6 +614,7 @@ class TestTwilioWebhook:
         assert resp.status_code == 200
         mock_send.assert_called_once()
         assert "Commands:" in mock_send.call_args[0][1]
+        assert "ETA <time>" in mock_send.call_args[0][1]
 
     @patch("main.dispatch.process_customer_reply")
     @patch("main.sms.validate_twilio_signature", return_value=True)
