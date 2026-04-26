@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 import config
 import db as db_module
 import dispatch
+import notifications
 import slack as slack_module
 import sms
 
@@ -625,8 +626,8 @@ async def webhook_retell(request: Request, webhook_token: str = ""):
         logger.info("Skipping non-lead/spam call: %s", retell_call_id)
         if not owner_direct_request:
             recording_line = f"\n🔊 Recording: {recording_url}" if recording_url else ""
-            transcript_block = slack_module.format_transcript_for_slack(transcript)
-            slack_module.send_slack_message(
+            transcript_block = notifications.format_transcript(transcript)
+            notifications.send_message(
                 f"⚠️ Call received but NOT dispatched ({skip_reason})\n\n"
                 f"Customer: {customer_name or 'Unknown'} ({phone or 'no phone'})\n"
                 f"Service: {service_type or 'N/A'}\n"
@@ -840,7 +841,8 @@ async def dashboard(request: Request, slug: str):
                 "jobs": jobs,
                 "slug": slug,
                 "dry_run": config.DRY_RUN,
-                "slack_enabled": config.SLACK_ENABLED,
+                "notifications_enabled": config.NOTIFICATIONS_ENABLED,
+                "notification_provider": config.NOTIFICATION_PROVIDER,
             },
         )
     finally:

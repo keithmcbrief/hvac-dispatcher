@@ -10,9 +10,9 @@ The current workflow is:
 4. Contractor replies are classified with a regex fast path and an OpenAI fallback.
 5. Customers are texted after a contractor confirms with an ETA.
 6. Eddie is notified when a contractor confirms, declines, gives a condition, or needs manual handling.
-7. Customer replies are relayed to Eddie/Slack for manual handling.
+7. Customer replies are relayed to Eddie/chat notifications for manual handling.
 
-The app does not auto-answer customer replies. It relays the exact customer message to Eddie/Slack so Eddie can jump in.
+The app does not auto-answer customer replies. It relays the exact customer message to Eddie/chat notifications so Eddie can jump in.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ The app does not auto-answer customer replies. It relays the exact customer mess
 - SQLite with WAL mode
 - Twilio SMS
 - Retell post-call webhook intake
-- Optional Slack notifications
+- Optional chat webhook notifications, including free Discord webhooks
 - Fly.io deployment with a persistent volume
 
 Important files:
@@ -31,7 +31,8 @@ Important files:
 - `classifier.py`: reply classifier
 - `db.py`: SQLite schema and query helpers
 - `sms.py`: Twilio helpers and webhook signature validation
-- `slack.py`: Slack webhook and request validation helpers
+- `notifications.py`: outbound Discord, Slack, or generic webhook notifications
+- `slack.py`: Slack request validation and legacy notification aliases
 - `templates/dashboard.html`: dry-run dispatch dashboard
 - `test_scenarios/`: local dry-run Retell payload fixtures
 
@@ -135,8 +136,14 @@ fly secrets set -a hvac-dispatcher \
   JOSE_PHONE="+1..." \
   MARIO_PHONE="+1..." \
   RAUL_PHONE="+1..." \
+  NOTIFICATIONS_ENABLED=true \
+  NOTIFICATION_PROVIDER=both \
+  SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..." \
+  DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..." \
   DASHBOARD_SLUG="choose-a-long-random-secret-slug"
 ```
+
+Use `NOTIFICATION_PROVIDER=both` during the migration to post every outbound notification to both Slack and Discord. Set it to `discord`, `slack`, or `generic` when you only want one destination. If both Slack and Discord webhook URLs are present and `NOTIFICATION_PROVIDER` is unset, the app defaults to `both`.
 
 Deploy a single Machine:
 
@@ -148,13 +155,13 @@ This service is designed for one running instance because it uses local SQLite a
 
 ## Emergency Switches
 
-Mute system/error alerts immediately if Slack starts getting spammed by polling alerts:
+Mute system/error alerts immediately if chat notifications start getting spammed by polling alerts:
 
 ```bash
 fly secrets set -a hvac-dispatcher SYSTEM_ALERTS_ENABLED=false
 ```
 
-This does not stop customer/job Slack notifications, transcripts, or contractor texts. It only mutes messages sent through `[HVAC DISPATCH ALERT]`, such as stale-job, heartbeat, and polling-loop alerts.
+This does not stop customer/job notifications, transcripts, or contractor texts. It only mutes messages sent through `[HVAC DISPATCH ALERT]`, such as stale-job, heartbeat, and polling-loop alerts.
 
 Re-enable system alerts after the issue is fixed:
 

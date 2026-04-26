@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 
 import config
 import db as db_module
+import notifications
 import sms
 from classifier import classify_reply
 
@@ -204,7 +205,7 @@ def _build_customer_confirmation_sms(job, contractor_name: str, time_display: st
 
 
 def _customer_sms_failure_reason(exc: Exception) -> str:
-    """Return a Slack-safe explanation for customer SMS send failures."""
+    """Return a notification-safe explanation for customer SMS send failures."""
     code = getattr(exc, "code", None)
     msg = (getattr(exc, "msg", "") or str(exc)).strip()
 
@@ -235,11 +236,10 @@ def _send_and_log(conn, job_id, contractor_name, phone, body):
 
 
 def _notify_eddie(conn, job_id, body):
-    """Send notification to Eddie (Slack or SMS) and log it to the messages table."""
+    """Send notification to Eddie (chat webhook or SMS) and log it to the messages table."""
     sid = None
-    if config.SLACK_ENABLED:
-        import slack as slack_module
-        slack_module.send_slack_message(body)
+    if config.NOTIFICATIONS_ENABLED:
+        notifications.send_message(body)
     else:
         sid = sms.send_eddie_notification(body)
     db_module.log_message(
@@ -288,9 +288,8 @@ def start_dispatch(conn, job_id):
     priority_label = "🚨 EMERGENCY" if job["priority"] == "emergency" else "📞 New call"
     recording_line = f"\n🔊 Recording: {job['recording_url']}" if job["recording_url"] else ""
     transcript_block = ""
-    if config.SLACK_ENABLED:
-        import slack as slack_module
-        transcript_block = slack_module.format_transcript_for_slack(job["transcript"])
+    if config.NOTIFICATIONS_ENABLED:
+        transcript_block = notifications.format_transcript(job["transcript"])
 
     _notify_eddie(
         conn, job_id,
@@ -429,7 +428,7 @@ def process_contractor_reply(conn, job, contractor_name, reply_text, twilio_mess
 
 
 def process_customer_reply(conn, job, from_number, reply_text, twilio_message_sid=None):
-    """Relay an inbound customer SMS to Eddie/Slack with job context."""
+    """Relay an inbound customer SMS to Eddie with job context."""
     if twilio_message_sid and db_module.get_message_by_twilio_message_sid(conn, twilio_message_sid):
         logger.info("Duplicate customer SMS ignored: %s", twilio_message_sid)
         return

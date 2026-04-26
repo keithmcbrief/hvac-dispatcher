@@ -21,6 +21,7 @@ def _use_temp_db(monkeypatch, tmp_path):
     monkeypatch.setenv("RAUL_PHONE", "+15550003333")
     monkeypatch.setenv("EDDIE_PHONE", "+15550009999")
     monkeypatch.setenv("BUILDER_PHONE", "+15550008888")
+    monkeypatch.setenv("NOTIFICATIONS_ENABLED", "false")
     monkeypatch.setenv("SLACK_ENABLED", "false")
 
     import config
@@ -66,8 +67,8 @@ def _create_test_job(db, conn, priority="normal"):
     )
 
 
-def test_start_dispatch_slack_notification_includes_transcript(dispatch_module, db, conn):
-    dispatch_module.config.SLACK_ENABLED = True
+def test_start_dispatch_chat_notification_includes_transcript(dispatch_module, db, conn):
+    dispatch_module.config.NOTIFICATIONS_ENABLED = True
     job = db.create_job(
         conn,
         customer_name="John Smith",
@@ -78,13 +79,13 @@ def test_start_dispatch_slack_notification_includes_transcript(dispatch_module, 
         transcript="Agent: Hi\nUser: My AC is broken",
     )
 
-    with patch("slack.send_slack_message") as mock_slack, patch("dispatch.sms") as mock_sms:
+    with patch("notifications.send_message") as mock_notification, patch("dispatch.sms") as mock_sms:
         mock_sms.send_sms.return_value = "SM_TEST_SID"
         dispatch_module.start_dispatch(conn, job["id"])
 
-    slack_text = mock_slack.call_args[0][0]
-    assert "Full transcript:" in slack_text
-    assert "Agent: Hi\nUser: My AC is broken" in slack_text
+    notification_text = mock_notification.call_args[0][0]
+    assert "Full transcript:" in notification_text
+    assert "Agent: Hi\nUser: My AC is broken" in notification_text
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +264,7 @@ def test_reply_accepted_texts_customer(mock_sms, mock_classify, dispatch_module,
 @patch("dispatch.classify_reply")
 @patch("dispatch.sms")
 def test_reply_accepted_reports_invalid_customer_phone(mock_sms, mock_classify, dispatch_module, db, conn):
-    """Customer SMS failures should include the Twilio reason in Eddie's Slack notice."""
+    """Customer SMS failures should include the Twilio reason in Eddie's notice."""
     mock_sms.send_sms.side_effect = TwilioRestException(
         400,
         "/Messages.json",

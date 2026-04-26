@@ -1,42 +1,24 @@
-"""Slack integration for Eddie notifications."""
+"""Slack request validation and legacy notification aliases."""
 
 import hashlib
 import hmac
-import logging
 import time
 
-import httpx
-
 import config
+import notifications
 
-logger = logging.getLogger(__name__)
 
-MAX_TRANSCRIPT_CHARS = 30_000
+MAX_TRANSCRIPT_CHARS = notifications.MAX_TRANSCRIPT_CHARS
 
 
 def format_transcript_for_slack(transcript: str, max_chars: int = MAX_TRANSCRIPT_CHARS) -> str:
-    """Return a Slack-safe transcript block for appending to notifications."""
-    transcript = (transcript or "").strip()
-    if not transcript:
-        return ""
-
-    transcript = transcript.replace("```", "'''")
-    if len(transcript) > max_chars:
-        transcript = transcript[:max_chars].rstrip()
-        transcript = f"{transcript}\n[Transcript truncated in Slack.]"
-
-    return f"\n\nFull transcript:\n```{transcript}```"
+    """Return a chat-safe transcript block for appending to notifications."""
+    return notifications.format_transcript(transcript, max_chars=max_chars)
 
 
 def send_slack_message(text: str) -> None:
-    """Post a message to the Eddie dispatch Slack channel via Incoming Webhook."""
-    if not config.SLACK_WEBHOOK_URL:
-        logger.warning("SLACK_WEBHOOK_URL not set, skipping Slack message")
-        return
-
-    resp = httpx.post(config.SLACK_WEBHOOK_URL, json={"text": text}, timeout=10)
-    resp.raise_for_status()
-    logger.info("Slack message sent: %s", text[:80])
+    """Legacy alias for the configured outbound notification provider."""
+    notifications.send_message(text)
 
 
 def validate_slack_request(timestamp: str, body: bytes, signature: str) -> bool:

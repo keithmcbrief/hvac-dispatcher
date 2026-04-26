@@ -267,10 +267,10 @@ class TestRetellWebhook:
         assert job["priority"] == "emergency"
         mock_dispatch.assert_called_once()
 
-    @patch("main.slack_module.send_slack_message")
+    @patch("main.notifications.send_message")
     @patch("main.dispatch.start_dispatch")
     @patch("main.sms.validate_retell_signature", return_value=True)
-    def test_ignores_call_ended_before_analysis(self, mock_validate, mock_dispatch, mock_slack, client):
+    def test_ignores_call_ended_before_analysis(self, mock_validate, mock_dispatch, mock_notification, client):
         payload = {
             "event": "call_ended",
             "call": {
@@ -289,7 +289,7 @@ class TestRetellWebhook:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ignored"
         mock_dispatch.assert_not_called()
-        mock_slack.assert_not_called()
+        mock_notification.assert_not_called()
 
     @patch("main.dispatch.start_dispatch")
     @patch("main.sms.validate_retell_signature", return_value=True)
@@ -319,11 +319,11 @@ class TestRetellWebhook:
         mock_dispatch.assert_called_once()
 
     @patch("main.sms.send_eddie_notification")
-    @patch("main.slack_module.send_slack_message")
+    @patch("main.notifications.send_message")
     @patch("main.dispatch.start_dispatch")
     @patch("main.sms.validate_retell_signature", return_value=True)
     def test_owner_vehicle_quote_call_is_forwarded_to_eddie_not_dispatched(
-        self, mock_validate, mock_dispatch, mock_slack, mock_eddie_sms, client, conn, db
+        self, mock_validate, mock_dispatch, mock_notification, mock_eddie_sms, client, conn, db
     ):
         payload = {
             "event": "call_analyzed",
@@ -362,7 +362,7 @@ class TestRetellWebhook:
         assert resp.status_code == 200
         assert resp.json() == {"status": "skipped", "reason": "not a lead"}
         mock_dispatch.assert_not_called()
-        mock_slack.assert_not_called()
+        mock_notification.assert_not_called()
         mock_eddie_sms.assert_called_once()
         forwarded_text = mock_eddie_sms.call_args[0][0]
         assert "Caller asked for Eddie directly" in forwarded_text
@@ -371,11 +371,11 @@ class TestRetellWebhook:
         assert "Westside Chevrolet" in forwarded_text
         assert db.get_recent_jobs(conn) == []
 
-    @patch("main.slack_module.send_slack_message")
+    @patch("main.notifications.send_message")
     @patch("main.dispatch.start_dispatch")
     @patch("main.sms.validate_retell_signature", return_value=True)
     def test_retell_dispatch_allowed_false_blocks_contractor_dispatch(
-        self, mock_validate, mock_dispatch, mock_slack, client, conn, db
+        self, mock_validate, mock_dispatch, mock_notification, client, conn, db
     ):
         payload = {
             "event": "call_analyzed",
@@ -409,7 +409,7 @@ class TestRetellWebhook:
         assert resp.status_code == 200
         assert resp.json() == {"status": "skipped", "reason": "dispatch not allowed"}
         mock_dispatch.assert_not_called()
-        mock_slack.assert_called_once()
+        mock_notification.assert_called_once()
         assert db.get_recent_jobs(conn) == []
 
     @patch("main.sms.send_eddie_notification")
@@ -442,11 +442,11 @@ class TestRetellWebhook:
         assert "Maria (+14805551212)" in mock_eddie_sms.call_args[0][0]
         assert db.get_recent_jobs(conn) == []
 
-    @patch("main.slack_module.send_slack_message")
+    @patch("main.notifications.send_message")
     @patch("main.dispatch.start_dispatch")
     @patch("main.sms.validate_retell_signature", return_value=True)
     def test_city_only_address_is_not_dispatchable(
-        self, mock_validate, mock_dispatch, mock_slack, client
+        self, mock_validate, mock_dispatch, mock_notification, client
     ):
         payload = {
             "call_id": "retell-city-only",
@@ -467,7 +467,7 @@ class TestRetellWebhook:
         assert resp.status_code == 200
         assert resp.json() == {"status": "skipped", "reason": "no service address provided"}
         mock_dispatch.assert_not_called()
-        mock_slack.assert_called_once()
+        mock_notification.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

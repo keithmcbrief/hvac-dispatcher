@@ -1,12 +1,12 @@
 # Eddie Dispatch Guide
 
-Kristi -> Dispatch App -> Contractors -> Slack
+Kristi -> Dispatch App -> Contractors -> Chat Notifications
 
 Prepared by Spotter Digital - spotterdigital.ai
 
-## What You See In Slack
+## What You See In Chat Notifications
 
-Every valid customer call sends a Slack message to you with the job details:
+Every valid customer call sends a Discord/chat message to you with the job details:
 
 - Job number
 - Service type
@@ -19,7 +19,7 @@ Every valid customer call sends a Slack message to you with the job details:
 - Customer confirmation status after a contractor provides an ETA
 - Any customer replies after the confirmation text is sent
 
-If Kristi receives a call that is not dispatchable, you still get a Slack notice. This includes calls where no service address was collected, the call was not a lead, or it was spam/wrong number. Those notices also include the transcript when available, so you can review what happened.
+If Kristi receives a call that is not dispatchable, you still get a chat notice. This includes calls where no service address was collected, the call was not a lead, or it was spam/wrong number. Those notices also include the transcript when available, so you can review what happened.
 
 ## Contractor Priority
 
@@ -41,16 +41,16 @@ A normal job is any standard service request that is not marked urgent or emerge
 
 1. Kristi finishes the call.
 2. Retell sends the analyzed call data to the dispatch app.
-3. You get a Slack message with the job details and full transcript.
+3. You get a chat message with the job details and full transcript.
 4. Jose gets the first contractor text.
-5. If Jose accepts with an ETA, the job is confirmed, the customer gets a confirmation text, and you get a Slack confirmation.
+5. If Jose accepts with an ETA, the job is confirmed, the customer gets a confirmation text, and you get a chat confirmation.
 6. If Jose accepts without an ETA, the system asks Jose for an ETA and does not text the customer yet.
-7. Once Jose provides the ETA, the customer gets the confirmation text and you get the final Slack confirmation.
+7. Once Jose provides the ETA, the customer gets the confirmation text and you get the final chat confirmation.
 8. If Jose declines, the job moves to Mario immediately.
 9. If Jose does not reply, the system follows up with Jose.
 10. If Jose still does not reply after all attempts, the job moves to Mario.
 11. The same process repeats for Mario, then Raul.
-12. If nobody accepts, you get a Slack alert that no contractor is available and the job needs manual handling.
+12. If nobody accepts, you get a chat alert that no contractor is available and the job needs manual handling.
 
 ## Emergency Job Flow
 
@@ -58,13 +58,13 @@ An emergency job is any call marked urgent, emergency, or ASAP by Kristi.
 
 1. Kristi finishes the call.
 2. Retell sends the analyzed call data to the dispatch app.
-3. You get a Slack message marked EMERGENCY with the job details and full transcript.
+3. You get a chat message marked EMERGENCY with the job details and full transcript.
 4. Jose, Mario, and Raul all get the job text at the same time.
 5. The first contractor to accept with an ETA gets assigned the job.
 6. If the first contractor accepts without an ETA, the system asks that contractor for an ETA and does not text the customer yet.
-7. Once the ETA is provided, the customer gets the confirmation text and you get a Slack confirmation.
+7. Once the ETA is provided, the customer gets the confirmation text and you get a chat confirmation.
 8. Other contacted contractors get a text saying the job has been taken.
-9. If nobody responds after all attempts, you get a Slack alert for manual handling.
+9. If nobody responds after all attempts, you get a chat alert for manual handling.
 
 ## Timing And Follow-Ups
 
@@ -118,11 +118,11 @@ Contractors reply in plain language by text. The system uses simple matching for
 
 | Type | Examples | What Happens |
 | --- | --- | --- |
-| Accepted with ETA | "Yes 5pm" / "On my way" / "I can be there in 30 min" | Job confirms. Customer gets a confirmation text. You get Slack confirmation with ETA. |
-| Accepted without ETA | "Yes" / "I can take it" | Job waits for ETA. Contractor gets an ETA request. Customer is not texted yet. You get a Slack notice. |
+| Accepted with ETA | "Yes 5pm" / "On my way" / "I can be there in 30 min" | Job confirms. Customer gets a confirmation text. You get chat confirmation with ETA. |
+| Accepted without ETA | "Yes" / "I can take it" | Job waits for ETA. Contractor gets an ETA request. Customer is not texted yet. You get a chat notice. |
 | Declined | "No" / "Can't make it" / "Pass" | Job moves to next contractor immediately. |
-| Conditional | "I can do it after 6pm" / "Only if customer can wait" | Job pauses. You get a Slack alert with the condition to decide. |
-| Unclear | "Maybe" / "Where is it?" / "Call me" | You get a Slack alert. Handle manually or wait for clarification. |
+| Conditional | "I can do it after 6pm" / "Only if customer can wait" | Job pauses. You get a chat alert with the condition to decide. |
+| Unclear | "Maybe" / "Where is it?" / "Call me" | You get a chat alert. Handle manually or wait for clarification. |
 
 ## What Customers Receive
 
@@ -146,7 +146,7 @@ If a contractor accepts without an ETA, the customer is not texted yet. The syst
 
 The app does not automatically answer customer replies.
 
-If the customer replies to the Twilio number, the exact message is relayed to Slack with:
+If the customer replies to the Twilio number, the exact message is relayed to chat notifications with:
 
 - Job number
 - Customer name and phone number
@@ -155,7 +155,7 @@ If the customer replies to the Twilio number, the exact message is relayed to Sl
 - ETA, when available
 - The exact customer message
 
-Example Slack relay:
+Example chat relay:
 
 ```text
 Customer reply for Job #12
@@ -173,11 +173,11 @@ This lets you jump in manually when the customer asks a question, changes timing
 
 ## Your Role
 
-You do not need to monitor every text manually. Slack is your visibility layer.
+You do not need to monitor every text manually. Chat notifications are your visibility layer.
 
 Watch for:
 
-- New-call Slack alerts
+- New-call chat alerts
 - Emergency alerts
 - Confirmed contractor alerts
 - Customer confirmation status
@@ -193,19 +193,19 @@ If the contractor provided an ETA, the app sends the initial customer confirmati
 
 If the contractor accepted without an ETA, the app asks the contractor for timing first and does not text the customer until the ETA is received.
 
-You should still watch Slack for customer replies, customer questions, contractor conditions, and manual-handling alerts.
+You should still watch chat notifications for customer replies, customer questions, contractor conditions, and manual-handling alerts.
 
 ## Important Notes
 
 - The app texts the customer only after a contractor provides an ETA.
 - The app does not automatically answer customer replies.
-- Customer replies are relayed to Slack exactly as received.
-- Slack receives full call visibility, including transcripts when Retell provides them.
+- Customer replies are relayed to chat notifications exactly as received.
+- Chat notifications receive full call visibility, including transcripts when Retell provides them.
 - Calls that are clearly not HVAC service, or that only include a city/state instead of a service address, are not dispatched to contractors.
 - Calls asking for Eddie, Eddy, or Edilberto directly are not dispatched to contractors. Eddie gets a direct SMS with the caller details instead.
 - Contractor phone numbers matter: routing depends on each contractor texting back from the phone number configured for them.
 - A contractor reply from a different number will not be recognized automatically.
-- If Retell does not collect an address, the call is not dispatched to contractors. You get a Slack notice instead.
+- If Retell does not collect an address, the call is not dispatched to contractors. You get a chat notice instead.
 - The live database is stored on Fly in `/data/dispatch.db`.
 
 Spotter Digital - spotterdigital.ai - Katy, TX

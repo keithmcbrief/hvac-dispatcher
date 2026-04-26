@@ -24,4 +24,4 @@ def test_format_transcript_for_slack_truncates_long_text():
     block = slack.format_transcript_for_slack("a" * 10, max_chars=5)
 
     assert "aaaaa" in block
-    assert "Transcript truncated in Slack" in block
+    assert "Transcript truncated in notification" in block

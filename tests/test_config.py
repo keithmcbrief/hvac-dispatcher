@@ -100,6 +100,51 @@ def test_system_alerts_can_be_disabled(monkeypatch):
     assert config.SYSTEM_ALERTS_ENABLED is False
 
 
+def test_discord_notification_provider_from_env(monkeypatch):
+    """Discord is selected automatically when its webhook URL is configured."""
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.example/webhook")
+    monkeypatch.setenv("NOTIFICATIONS_ENABLED", "true")
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("NOTIFICATION_PROVIDER", raising=False)
+
+    import config
+    importlib.reload(config)
+
+    assert config.NOTIFICATION_PROVIDER == "discord"
+    assert config.NOTIFICATIONS_ENABLED is True
+    assert config.SLACK_ENABLED is False
+
+
+def test_both_notification_provider_when_both_urls_present(monkeypatch):
+    """Both chat destinations are selected automatically when both URLs exist."""
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://slack.example/webhook")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.example/webhook")
+    monkeypatch.setenv("NOTIFICATIONS_ENABLED", "true")
+    monkeypatch.delenv("NOTIFICATION_PROVIDER", raising=False)
+
+    import config
+    importlib.reload(config)
+
+    assert config.NOTIFICATION_PROVIDER == "both"
+    assert config.NOTIFICATIONS_ENABLED is True
+    assert config.SLACK_ENABLED is True
+
+
+def test_legacy_slack_enabled_still_works(monkeypatch):
+    """SLACK_ENABLED remains supported for existing deployments."""
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("NOTIFICATION_PROVIDER", raising=False)
+    monkeypatch.delenv("NOTIFICATIONS_ENABLED", raising=False)
+    monkeypatch.setenv("SLACK_ENABLED", "true")
+
+    import config
+    importlib.reload(config)
+
+    assert config.NOTIFICATION_PROVIDER == "slack"
+    assert config.NOTIFICATIONS_ENABLED is True
+    assert config.SLACK_ENABLED is True
+
+
 def test_business_name_default(monkeypatch):
     """Customer-facing SMS copy should have a business name fallback."""
     monkeypatch.delenv("BUSINESS_NAME", raising=False)

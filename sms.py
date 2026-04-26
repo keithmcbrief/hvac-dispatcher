@@ -53,7 +53,7 @@ def send_sms(to: str, body: str) -> str:
 
 
 def send_error_alert(message: str) -> None:
-    """Send an alert to Slack (if enabled) or SMS to the builder phone.
+    """Send an alert to chat notifications (if enabled) or SMS to the builder phone.
 
     Catches its own exceptions so an alert failure never crashes the app.
     """
@@ -63,13 +63,13 @@ def send_error_alert(message: str) -> None:
 
     body = f"[HVAC DISPATCH ALERT] {message}"
     try:
-        if config.SLACK_ENABLED:
-            import slack as slack_module
-            slack_module.send_slack_message(body)
+        if config.NOTIFICATIONS_ENABLED:
+            import notifications
+            notifications.send_message(body)
         elif config.BUILDER_PHONE:
             send_sms(config.BUILDER_PHONE, body)
         else:
-            logger.warning("No alert destination configured (no Slack, no BUILDER_PHONE)")
+            logger.warning("No alert destination configured (no chat webhook, no BUILDER_PHONE)")
     except Exception:
         logger.exception("Failed to send error alert")
 

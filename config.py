@@ -57,10 +57,29 @@ JOB_TTL_HOURS = 24
 HEARTBEAT_HOURS = int(os.getenv("HEARTBEAT_HOURS", "12"))
 HEARTBEAT_ALERT_INTERVAL_HOURS = int(os.getenv("HEARTBEAT_ALERT_INTERVAL_HOURS", "24"))
 
-# Slack (replaces Eddie SMS when enabled)
+# Chat notifications (replaces Eddie SMS when enabled)
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+NOTIFICATION_WEBHOOK_URL = os.getenv("NOTIFICATION_WEBHOOK_URL", "")
+_DEFAULT_NOTIFICATION_PROVIDER = "slack"
+if SLACK_WEBHOOK_URL:
+    _DEFAULT_NOTIFICATION_PROVIDER = "slack"
+if DISCORD_WEBHOOK_URL:
+    _DEFAULT_NOTIFICATION_PROVIDER = "discord"
+if SLACK_WEBHOOK_URL and DISCORD_WEBHOOK_URL:
+    _DEFAULT_NOTIFICATION_PROVIDER = "both"
+NOTIFICATION_PROVIDER = os.getenv(
+    "NOTIFICATION_PROVIDER",
+    _DEFAULT_NOTIFICATION_PROVIDER,
+)
+NOTIFICATIONS_ENABLED = os.getenv(
+    "NOTIFICATIONS_ENABLED",
+    os.getenv("SLACK_ENABLED", ""),
+).lower() in ("true", "1", "yes")
+
+# Slack compatibility and optional Slack command webhook validation
 SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
-SLACK_ENABLED = os.getenv("SLACK_ENABLED", "").lower() in ("true", "1", "yes")
+SLACK_ENABLED = NOTIFICATIONS_ENABLED and NOTIFICATION_PROVIDER.lower() in ("slack", "both")
 
 # Dashboard
 DASHBOARD_SLUG = os.getenv("DASHBOARD_SLUG") or secrets.token_hex(4)

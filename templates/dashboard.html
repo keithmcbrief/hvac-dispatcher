@@ -86,9 +86,9 @@
   <h1>Eddie HVAC Dispatch</h1>
 
   {% if dry_run %}
-  <div class="mode-banner{% if slack_enabled %} warn{% endif %}">
+  <div class="mode-banner{% if notifications_enabled %} warn{% endif %}">
     <strong>Dry-run mode.</strong> Contractor and customer texts are simulated.
-    {% if slack_enabled %}Slack is enabled and will post to the configured webhook.{% else %}Slack is disabled for this run.{% endif %}
+    {% if notifications_enabled %}{{ notification_provider|title }} notifications are enabled and will post to the configured webhook.{% else %}Chat notifications are disabled for this run.{% endif %}
   </div>
   {% else %}
   <div class="mode-banner warn">
