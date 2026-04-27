@@ -360,9 +360,10 @@ class TestRetellWebhook:
         )
 
         assert resp.status_code == 200
-        assert resp.json() == {"status": "skipped", "reason": "not a lead"}
+        assert resp.json() == {"status": "skipped", "reason": "owner direct request"}
         mock_dispatch.assert_not_called()
-        mock_notification.assert_not_called()
+        mock_notification.assert_called_once()
+        assert "owner direct request" in mock_notification.call_args[0][0]
         mock_eddie_sms.assert_called_once()
         forwarded_text = mock_eddie_sms.call_args[0][0]
         assert "Caller asked for Eddie directly" in forwarded_text
@@ -413,10 +414,11 @@ class TestRetellWebhook:
         assert db.get_recent_jobs(conn) == []
 
     @patch("main.sms.send_eddie_notification")
+    @patch("main.notifications.send_message")
     @patch("main.dispatch.start_dispatch")
     @patch("main.sms.validate_retell_signature", return_value=True)
     def test_edilberto_direct_request_is_not_dispatched(
-        self, mock_validate, mock_dispatch, mock_eddie_sms, client, conn, db
+        self, mock_validate, mock_dispatch, mock_notification, mock_eddie_sms, client, conn, db
     ):
         payload = {
             "call_id": "retell-edilberto-direct",
@@ -436,8 +438,9 @@ class TestRetellWebhook:
         )
 
         assert resp.status_code == 200
-        assert resp.json() == {"status": "skipped", "reason": "not a lead"}
+        assert resp.json() == {"status": "skipped", "reason": "owner direct request"}
         mock_dispatch.assert_not_called()
+        mock_notification.assert_called_once()
         mock_eddie_sms.assert_called_once()
         assert "Maria (+14805551212)" in mock_eddie_sms.call_args[0][0]
         assert db.get_recent_jobs(conn) == []

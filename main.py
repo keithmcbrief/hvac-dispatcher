@@ -608,7 +608,7 @@ async def webhook_retell(request: Request, webhook_token: str = ""):
             recording_url,
             call_summary,
         )
-        skip_reason = "not a lead"
+        skip_reason = "owner direct request"
     else:
         skip_reason = _dispatch_skip_reason(
             is_lead=is_lead,
@@ -624,18 +624,17 @@ async def webhook_retell(request: Request, webhook_token: str = ""):
 
     if skip_reason:
         logger.info("Skipping non-lead/spam call: %s", retell_call_id)
-        if not owner_direct_request:
-            recording_line = f"\n🔊 Recording: {recording_url}" if recording_url else ""
-            transcript_block = notifications.format_transcript(transcript)
-            notifications.send_message(
-                f"⚠️ Call received but NOT dispatched ({skip_reason})\n\n"
-                f"Customer: {customer_name or 'Unknown'} ({phone or 'no phone'})\n"
-                f"Service: {service_type or 'N/A'}\n"
-                f"Issue: {issue_description or 'N/A'}\n"
-                f"Address: {address or 'NOT PROVIDED'}"
-                f"{recording_line}"
-                f"{transcript_block}"
-            )
+        recording_line = f"\n🔊 Recording: {recording_url}" if recording_url else ""
+        transcript_block = notifications.format_transcript(transcript)
+        notifications.send_message(
+            f"⚠️ Call received but NOT dispatched ({skip_reason})\n\n"
+            f"Customer: {customer_name or 'Unknown'} ({phone or 'no phone'})\n"
+            f"Service: {service_type or 'N/A'}\n"
+            f"Issue: {issue_description or 'N/A'}\n"
+            f"Address: {address or 'NOT PROVIDED'}"
+            f"{recording_line}"
+            f"{transcript_block}"
+        )
         return {"status": "skipped", "reason": skip_reason}
 
     conn = db_module.get_connection()
@@ -998,7 +997,7 @@ async def fire_scenario(name: str):
             "",
             call_summary,
         )
-        skip_reason = "not a lead"
+        skip_reason = "owner direct request"
     else:
         skip_reason = _dispatch_skip_reason(
             is_lead=is_lead,
