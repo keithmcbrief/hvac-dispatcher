@@ -7,6 +7,11 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+
+def _env_bool(name: str, default: str = "") -> bool:
+    return os.getenv(name, default).lower() in ("true", "1", "yes", "on")
+
+
 # Twilio — support both TWILIO_* and legacy naming
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID") or os.getenv("ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN") or os.getenv("AUTH_TOKEN", "")
@@ -35,18 +40,37 @@ BUSINESS_NAME = os.getenv("BUSINESS_NAME", "Residential AC & Heating")
 # Eddie's phone
 EDDIE_PHONE = os.getenv("EDDIE_PHONE", "")
 
-# Contractors — ordered by priority
+# Contractors - ordered by priority.
+# Jose is temporarily paused. Set JOSE_ACTIVE=true to restore the original order.
 CONTRACTORS = {
-    "Jose": {"phone": os.getenv("JOSE_PHONE", ""), "priority": 1},
-    "Mario": {"phone": os.getenv("MARIO_PHONE", ""), "priority": 2},
-    "Raul": {"phone": os.getenv("RAUL_PHONE", ""), "priority": 3},
+    "Jose": {
+        "phone": os.getenv("JOSE_PHONE", ""),
+        "priority": 1,
+        "active": _env_bool("JOSE_ACTIVE", "false"),
+    },
+    "Mario": {
+        "phone": os.getenv("MARIO_PHONE", ""),
+        "priority": 2,
+        "active": _env_bool("MARIO_ACTIVE", "true"),
+    },
+    "Raul": {
+        "phone": os.getenv("RAUL_PHONE", ""),
+        "priority": 3,
+        "active": _env_bool("RAUL_ACTIVE", "true"),
+    },
 }
 
-# Reverse lookup: phone → contractor name
+# Reverse lookup: phone -> contractor name.
+# Includes inactive contractors so replies to already-assigned jobs still route.
 CONTRACTOR_PHONES = {info["phone"]: name for name, info in CONTRACTORS.items() if info["phone"]}
 
 # Dry-run mode — suppress real Twilio SMS, log everything to DB
-DRY_RUN = os.getenv("DRY_RUN", "").lower() in ("true", "1", "yes")
+DRY_RUN = _env_bool("DRY_RUN")
+
+# Current operating mode: Retell intake sends the job to the technician once,
+# and the technician contacts the customer directly.
+JOB_POLLING_ENABLED = _env_bool("JOB_POLLING_ENABLED", "false")
+CUSTOMER_CONFIRMATION_SMS_ENABLED = _env_bool("CUSTOMER_CONFIRMATION_SMS_ENABLED", "false")
 
 # Timing constants (env-overridable for fast testing)
 FOLLOW_UP_INTERVAL_SECONDS = int(os.getenv("FOLLOW_UP_INTERVAL_SECONDS", "300"))

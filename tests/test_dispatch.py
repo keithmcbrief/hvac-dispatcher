@@ -19,6 +19,9 @@ def _use_temp_db(monkeypatch, tmp_path):
     monkeypatch.setenv("JOSE_PHONE", "+15550001111")
     monkeypatch.setenv("MARIO_PHONE", "+15550002222")
     monkeypatch.setenv("RAUL_PHONE", "+15550003333")
+    monkeypatch.setenv("JOSE_ACTIVE", "false")
+    monkeypatch.setenv("MARIO_ACTIVE", "true")
+    monkeypatch.setenv("RAUL_ACTIVE", "true")
     monkeypatch.setenv("EDDIE_PHONE", "+15550009999")
     monkeypatch.setenv("BUILDER_PHONE", "+15550008888")
     monkeypatch.setenv("NOTIFICATIONS_ENABLED", "false")
@@ -94,26 +97,27 @@ def test_start_dispatch_chat_notification_includes_transcript(dispatch_module, d
 
 
 @patch("dispatch.sms")
-def test_start_dispatch_normal_contacts_jose_first(mock_sms, dispatch_module, db, conn):
-    """Normal priority should contact Jose first (priority 1)."""
+def test_start_dispatch_normal_contacts_mario_first_while_jose_paused(mock_sms, dispatch_module, db, conn):
+    """Normal priority should contact Mario first while Jose is inactive."""
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
 
     job = _create_test_job(db, conn)
     dispatch_module.start_dispatch(conn, job["id"])
 
-    # Should have sent SMS to Jose
+    # Should have sent SMS to Mario
     mock_sms.send_sms.assert_called_once()
     call_args = mock_sms.send_sms.call_args
-    assert call_args[0][0] == "+15550001111"  # Jose's phone
+    assert call_args[0][0] == "+15550002222"  # Mario's phone
     assert f"#{job['id']}" in call_args[0][1]
+    assert "Customer: John Smith (+15551234567)" in call_args[0][1]
 
     # Job should be updated
     updated = db.get_job(conn, job["id"])
     assert updated["status"] == "contacting_contractor"
-    assert updated["current_contractor"] == "Jose"
+    assert updated["current_contractor"] == "Mario"
     assert updated["attempt_count"] == 1
-    assert updated["next_action_at"] is not None
+    assert updated["next_action_at"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -130,45 +134,45 @@ def test_start_dispatch_emergency_contacts_all(mock_sms, dispatch_module, db, co
     job = _create_test_job(db, conn, priority="emergency")
     dispatch_module.start_dispatch(conn, job["id"])
 
-    # Should have sent to all 3 contractors
-    assert mock_sms.send_sms.call_count == 3
+    # Should have sent to all active contractors
+    assert mock_sms.send_sms.call_count == 2
 
     phones_called = [c[0][0] for c in mock_sms.send_sms.call_args_list]
-    assert "+15550001111" in phones_called  # Jose
+    assert "+15550001111" not in phones_called  # Jose is paused
     assert "+15550002222" in phones_called  # Mario
     assert "+15550003333" in phones_called  # Raul
 
     updated = db.get_job(conn, job["id"])
     assert updated["status"] == "contacting_contractor"
-    assert updated["current_contractor"] == "Jose"  # first contacted
+    assert updated["current_contractor"] == "Mario"  # first active contractor
 
 
 # ---------------------------------------------------------------------------
-# start_dispatch — always texts Jose first even if he has another job
+# start_dispatch — always texts first active contractor even if he has another job
 # ---------------------------------------------------------------------------
 
 
 @patch("dispatch.sms")
-def test_start_dispatch_texts_jose_even_if_busy(mock_sms, dispatch_module, db, conn):
-    """Normal priority should always text Jose first regardless of other active jobs."""
+def test_start_dispatch_texts_mario_even_if_busy(mock_sms, dispatch_module, db, conn):
+    """Normal priority should always text Mario first regardless of other active jobs."""
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
 
-    # Give Jose an active job
+    # Give Mario an active job
     busy_job = db.create_job(conn, "Other Customer", "+15559999999", "999 Other St")
-    db.update_job(conn, busy_job["id"], current_contractor="Jose", status="awaiting_reply")
+    db.update_job(conn, busy_job["id"], current_contractor="Mario", status="awaiting_reply")
 
     job = _create_test_job(db, conn)
     dispatch_module.start_dispatch(conn, job["id"])
 
-    # Should still text Jose (priority 1, always first)
+    # Should still text Mario (first active contractor)
     call_args = mock_sms.send_sms.call_args
-    assert call_args[0][0] == "+15550001111"  # Jose's phone
-    assert "Reply YES + ETA" in call_args[0][1]
-    assert "or NO" in call_args[0][1]
+    assert call_args[0][0] == "+15550002222"  # Mario's phone
+    assert "Contact the customer directly" in call_args[0][1]
+    assert "Customer: John Smith (+15551234567)" in call_args[0][1]
 
     updated = db.get_job(conn, job["id"])
-    assert updated["current_contractor"] == "Jose"
+    assert updated["current_contractor"] == "Mario"
 
 
 # ---------------------------------------------------------------------------
@@ -231,8 +235,8 @@ def test_reply_accepted_normal(mock_sms, mock_classify, dispatch_module, db, con
 
 @patch("dispatch.classify_reply")
 @patch("dispatch.sms")
-def test_reply_accepted_texts_customer(mock_sms, mock_classify, dispatch_module, db, conn):
-    """Accepted reply with ETA should text the customer and notify Eddie."""
+def test_reply_accepted_does_not_text_customer_by_default(mock_sms, mock_classify, dispatch_module, db, conn):
+    """Accepted reply should not text the customer in technician handoff mode."""
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
     mock_classify.return_value = {
@@ -252,19 +256,18 @@ def test_reply_accepted_texts_customer(mock_sms, mock_classify, dispatch_module,
     customer_calls = [
         c for c in mock_sms.send_sms.call_args_list if c[0][0] == "+15551234567"
     ]
-    assert len(customer_calls) == 1
-    assert "Jose is confirmed for 5pm" in customer_calls[0][0][1]
-    assert "Reply here if anything changes" in customer_calls[0][0][1]
+    assert len(customer_calls) == 0
 
     notif = mock_sms.send_eddie_notification.call_args[0][0]
-    assert "Customer text sent" in notif
-    assert "Jose is confirmed for 5pm" in notif
+    assert "Customer was NOT texted automatically" in notif
+    assert "contact the customer directly" in notif
 
 
 @patch("dispatch.classify_reply")
 @patch("dispatch.sms")
 def test_reply_accepted_reports_invalid_customer_phone(mock_sms, mock_classify, dispatch_module, db, conn):
     """Customer SMS failures should include the Twilio reason in Eddie's notice."""
+    dispatch_module.config.CUSTOMER_CONFIRMATION_SMS_ENABLED = True
     mock_sms.send_sms.side_effect = TwilioRestException(
         400,
         "/Messages.json",
@@ -296,8 +299,8 @@ def test_reply_accepted_reports_invalid_customer_phone(mock_sms, mock_classify, 
 
 @patch("dispatch.classify_reply")
 @patch("dispatch.sms")
-def test_reply_accepted_without_eta_requests_eta(mock_sms, mock_classify, dispatch_module, db, conn):
-    """Accepted reply without ETA should ask contractor for time and not text customer."""
+def test_reply_accepted_without_eta_confirms_by_default(mock_sms, mock_classify, dispatch_module, db, conn):
+    """Accepted reply without ETA confirms in technician handoff mode."""
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
     mock_classify.return_value = {
@@ -315,25 +318,23 @@ def test_reply_accepted_without_eta_requests_eta(mock_sms, mock_classify, dispat
     dispatch_module.process_contractor_reply(conn, job, "Jose", "yes")
 
     updated = db.get_job(conn, job["id"])
-    assert updated["status"] == "accepted_waiting_eta"
+    assert updated["status"] == "contractor_confirmed"
     assert updated["current_contractor"] == "Jose"
+    assert updated["confirmed_time"] == "not specified"
     assert updated["next_action_at"] is None
 
-    mock_sms.send_sms.assert_called_once()
-    assert mock_sms.send_sms.call_args[0][0] == "+15550001111"
-    assert "Reply with ETA only" in mock_sms.send_sms.call_args[0][1]
-    assert "3-4pm" in mock_sms.send_sms.call_args[0][1]
     assert "+15551234567" not in [c[0][0] for c in mock_sms.send_sms.call_args_list]
 
     notif = mock_sms.send_eddie_notification.call_args[0][0]
-    assert "accepted but did not provide an ETA" in notif
-    assert "Customer has not been texted yet" in notif
+    assert "CONFIRMED" in notif
+    assert "Customer was NOT texted automatically" in notif
 
 
 @patch("dispatch.classify_reply")
 @patch("dispatch.sms")
 def test_reply_waiting_for_eta_accepts_time_only(mock_sms, mock_classify, dispatch_module, db, conn):
     """When waiting for ETA, a time-only reply should confirm and text customer."""
+    dispatch_module.config.CUSTOMER_CONFIRMATION_SMS_ENABLED = True
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
     mock_classify.return_value = {
@@ -369,6 +370,7 @@ def test_reply_waiting_for_eta_accepts_time_only(mock_sms, mock_classify, dispat
 @patch("dispatch.sms")
 def test_jose_waiting_for_eta_accepts_between_3_and_4(mock_sms, mock_classify, dispatch_module, db, conn):
     """Jose's exact ETA-only reply should confirm and text the customer."""
+    dispatch_module.config.CUSTOMER_CONFIRMATION_SMS_ENABLED = True
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
     mock_classify.return_value = {
@@ -406,6 +408,7 @@ def test_jose_waiting_for_eta_accepts_between_3_and_4(mock_sms, mock_classify, d
 @patch("dispatch.sms")
 def test_reply_unclear_yes_with_eta_confirms(mock_sms, mock_classify, dispatch_module, db, conn):
     """A clear YES + ETA reply should confirm even if the classifier returns unclear."""
+    dispatch_module.config.CUSTOMER_CONFIRMATION_SMS_ENABLED = True
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
     mock_classify.return_value = {
@@ -614,6 +617,7 @@ def test_escalation_chain_full(mock_sms, dispatch_module, db, conn):
 @patch("dispatch.sms")
 def test_follow_up_progression(mock_sms, dispatch_module, db, conn):
     """Follow-up: attempt 1->2 (follow_up_1), 2->3 (follow_up_2), 3->escalate."""
+    dispatch_module.config.JOB_POLLING_ENABLED = True
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
@@ -790,6 +794,7 @@ def test_eddie_command_cancel(mock_sms, dispatch_module, db, conn):
 @patch("dispatch.sms")
 def test_eddie_command_eta_confirms_waiting_job(mock_sms, dispatch_module, db, conn):
     """ETA command should confirm a job that is waiting on ETA."""
+    dispatch_module.config.CUSTOMER_CONFIRMATION_SMS_ENABLED = True
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
 
@@ -823,6 +828,7 @@ def test_eddie_command_eta_confirms_waiting_job(mock_sms, dispatch_module, db, c
 @patch("dispatch.sms")
 def test_polling_processes_overdue_jobs(mock_sms, dispatch_module, db, conn):
     """Polling loop should process jobs with past next_action_at."""
+    dispatch_module.config.JOB_POLLING_ENABLED = True
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
 
@@ -919,6 +925,7 @@ def test_polling_loop_runs_one_iteration(mock_sms, dispatch_module, db, conn):
     """Test that the polling loop processes one iteration correctly."""
     import asyncio
 
+    dispatch_module.config.JOB_POLLING_ENABLED = True
     mock_sms.send_sms.return_value = "SM_TEST_SID"
     mock_sms.send_eddie_notification.return_value = "SM_NOTIFY"
     mock_sms.send_error_alert = MagicMock()
@@ -992,7 +999,7 @@ def test_outbound_message_logged(mock_sms, dispatch_module, db, conn):
     ).fetchall()
     assert len(messages) == 1
     assert messages[0]["direction"] == "outbound"
-    assert messages[0]["contractor_name"] == "Jose"
+    assert messages[0]["contractor_name"] == "Mario"
 
 
 @patch("dispatch.classify_reply")

@@ -52,8 +52,12 @@ _polling_task: asyncio.Task | None = None
 async def lifespan(app: FastAPI):
     global _polling_task
     db_module.init_db()
-    _polling_task = asyncio.create_task(dispatch.run_polling_loop(config.DB_PATH))
-    logger.info("Polling loop started")
+    if config.JOB_POLLING_ENABLED:
+        _polling_task = asyncio.create_task(dispatch.run_polling_loop(config.DB_PATH))
+        logger.info("Polling loop started")
+    else:
+        _polling_task = None
+        logger.info("Polling loop disabled")
     yield
     if _polling_task:
         _polling_task.cancel()
@@ -61,7 +65,7 @@ async def lifespan(app: FastAPI):
             await _polling_task
         except asyncio.CancelledError:
             pass
-    logger.info("Polling loop stopped")
+        logger.info("Polling loop stopped")
 
 
 app = FastAPI(lifespan=lifespan)

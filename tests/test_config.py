@@ -33,10 +33,13 @@ def test_twilio_prefers_twilio_prefix(monkeypatch):
 
 
 def test_contractors_structure(monkeypatch):
-    """Contractors dict should have 3 entries with correct priorities."""
+    """Contractors dict should keep Jose paused and preserve original priority order."""
     monkeypatch.setenv("JOSE_PHONE", "+15551110001")
     monkeypatch.setenv("MARIO_PHONE", "+15551110002")
     monkeypatch.setenv("RAUL_PHONE", "+15551110003")
+    monkeypatch.delenv("JOSE_ACTIVE", raising=False)
+    monkeypatch.delenv("MARIO_ACTIVE", raising=False)
+    monkeypatch.delenv("RAUL_ACTIVE", raising=False)
 
     import config
     importlib.reload(config)
@@ -45,6 +48,9 @@ def test_contractors_structure(monkeypatch):
     assert config.CONTRACTORS["Mario"]["priority"] == 2
     assert config.CONTRACTORS["Raul"]["priority"] == 3
     assert config.CONTRACTORS["Jose"]["phone"] == "+15551110001"
+    assert config.CONTRACTORS["Jose"]["active"] is False
+    assert config.CONTRACTORS["Mario"]["active"] is True
+    assert config.CONTRACTORS["Raul"]["active"] is True
 
 
 def test_contractor_phones_reverse_lookup(monkeypatch):
@@ -52,10 +58,12 @@ def test_contractor_phones_reverse_lookup(monkeypatch):
     monkeypatch.setenv("JOSE_PHONE", "+15551110001")
     monkeypatch.setenv("MARIO_PHONE", "+15551110002")
     monkeypatch.setenv("RAUL_PHONE", "+15551110003")
+    monkeypatch.delenv("JOSE_ACTIVE", raising=False)
 
     import config
     importlib.reload(config)
 
+    # Jose stays recognizable for replies to any already-assigned jobs while paused.
     assert config.CONTRACTOR_PHONES["+15551110001"] == "Jose"
     assert config.CONTRACTOR_PHONES["+15551110002"] == "Mario"
     assert config.CONTRACTOR_PHONES["+15551110003"] == "Raul"
@@ -65,6 +73,8 @@ def test_timing_constants(monkeypatch):
     """Verify timing constants have expected default values."""
     monkeypatch.delenv("FOLLOW_UP_INTERVAL_SECONDS", raising=False)
     monkeypatch.delenv("POLL_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("JOB_POLLING_ENABLED", raising=False)
+    monkeypatch.delenv("CUSTOMER_CONFIRMATION_SMS_ENABLED", raising=False)
     monkeypatch.delenv("HEARTBEAT_HOURS", raising=False)
     monkeypatch.delenv("HEARTBEAT_ALERT_INTERVAL_HOURS", raising=False)
 
@@ -76,8 +86,22 @@ def test_timing_constants(monkeypatch):
     assert config.POLL_INTERVAL_SECONDS == 30
     assert config.STALENESS_ALERT_MINUTES == 15
     assert config.JOB_TTL_HOURS == 24
+    assert config.JOB_POLLING_ENABLED is False
+    assert config.CUSTOMER_CONFIRMATION_SMS_ENABLED is False
     assert config.HEARTBEAT_HOURS == 12
     assert config.HEARTBEAT_ALERT_INTERVAL_HOURS == 24
+
+
+def test_automation_flags_can_be_enabled(monkeypatch):
+    """Polling and customer confirmation can be restored by env flag."""
+    monkeypatch.setenv("JOB_POLLING_ENABLED", "true")
+    monkeypatch.setenv("CUSTOMER_CONFIRMATION_SMS_ENABLED", "true")
+
+    import config
+    importlib.reload(config)
+
+    assert config.JOB_POLLING_ENABLED is True
+    assert config.CUSTOMER_CONFIRMATION_SMS_ENABLED is True
 
 
 def test_system_alerts_enabled_by_default(monkeypatch):

@@ -6,13 +6,13 @@ The current workflow is:
 
 1. Retell AI handles the customer call and posts a call-analysis webhook.
 2. The app creates a dispatch job in SQLite.
-3. Contractors are texted through Twilio in priority order.
-4. Contractor replies are classified with a regex fast path and an OpenAI fallback.
-5. Customers are texted after a contractor confirms with an ETA.
+3. The technician is texted through Twilio with the job details and customer phone number.
+4. The technician contacts the customer directly and handles scheduling.
+5. Contractor replies, if any, are classified with a regex fast path and an OpenAI fallback.
 6. Eddie is notified when a contractor confirms, declines, gives a condition, or needs manual handling.
 7. Customer replies are relayed to Eddie/chat notifications for manual handling.
 
-The app does not auto-answer customer replies. It relays the exact customer message to Eddie/chat notifications so Eddie can jump in.
+Job polling, automatic follow-ups, and automatic customer confirmation texts are paused by default. The app does not auto-answer customer replies. It relays the exact customer message to Eddie/chat notifications so Eddie can jump in.
 
 ## Architecture
 
@@ -27,7 +27,7 @@ The app does not auto-answer customer replies. It relays the exact customer mess
 Important files:
 
 - `main.py`: FastAPI routes, webhook handlers, dashboard, dry-run endpoints
-- `dispatch.py`: contractor dispatch state machine and polling loop
+- `dispatch.py`: contractor dispatch state machine and optional polling loop
 - `classifier.py`: reply classifier
 - `db.py`: SQLite schema and query helpers
 - `sms.py`: Twilio helpers and webhook signature validation
@@ -64,11 +64,12 @@ Fill in the required values in `.env`:
 - `MARIO_PHONE`
 - `RAUL_PHONE`
 
+Jose is temporarily paused for outbound dispatch with `JOSE_ACTIVE=false`; Mario is the first active contractor.
+
 For local simulation without real SMS:
 
 ```bash
 DRY_RUN=true SKIP_SIGNATURE_VALIDATION=true \
-FOLLOW_UP_INTERVAL_SECONDS=15 POLL_INTERVAL_SECONDS=5 \
 python3.12 -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
@@ -80,7 +81,7 @@ python3.12 -c "from config import DASHBOARD_SLUG; print(f'http://localhost:8080/
 
 The dashboard can run an internal end-to-end simulation without texting Eddie,
 contractors, or customers. In dry-run mode, fire the
-`internal_customer_confirmation` scenario, reply as `Jose`, `Mario`, or `Raul`,
+`internal_customer_confirmation` scenario, reply as `Mario` or `Raul`,
 and reply as the `Customer` from the dashboard phone panels.
 
 Useful API calls for the same flow:
@@ -90,10 +91,10 @@ curl -X POST http://localhost:8080/test/clear
 curl -X POST http://localhost:8080/test/scenario/internal_customer_confirmation
 curl -X POST http://localhost:8080/test/reply \
   -H "Content-Type: application/json" \
-  -d '{"contractor":"Jose","body":"yes"}'
+  -d '{"contractor":"Mario","body":"yes"}'
 curl -X POST http://localhost:8080/test/reply \
   -H "Content-Type: application/json" \
-  -d '{"contractor":"Jose","body":"5pm"}'
+  -d '{"contractor":"Mario","body":"5pm"}'
 curl -X POST http://localhost:8080/test/customer \
   -H "Content-Type: application/json" \
   -d '{"body":"Can he come earlier?"}'
@@ -136,6 +137,9 @@ fly secrets set -a hvac-dispatcher \
   JOSE_PHONE="+1..." \
   MARIO_PHONE="+1..." \
   RAUL_PHONE="+1..." \
+  JOSE_ACTIVE=false \
+  MARIO_ACTIVE=true \
+  RAUL_ACTIVE=true \
   NOTIFICATIONS_ENABLED=true \
   NOTIFICATION_PROVIDER=both \
   SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..." \
@@ -145,17 +149,25 @@ fly secrets set -a hvac-dispatcher \
 
 Use `NOTIFICATION_PROVIDER=both` during the migration to post every outbound notification to both Slack and Discord. Set it to `discord`, `slack`, or `generic` when you only want one destination. If both Slack and Discord webhook URLs are present and `NOTIFICATION_PROVIDER` is unset, the app defaults to `both`.
 
+Optional legacy automation switches:
+
+```bash
+fly secrets set -a hvac-dispatcher \
+  JOB_POLLING_ENABLED=true \
+  CUSTOMER_CONFIRMATION_SMS_ENABLED=true
+```
+
 Deploy a single Machine:
 
 ```bash
 fly deploy -a hvac-dispatcher --ha=false
 ```
 
-This service is designed for one running instance because it uses local SQLite and an in-process polling loop.
+This service is designed for one running instance because it uses local SQLite. If `JOB_POLLING_ENABLED=true`, it also runs an in-process polling loop.
 
 ## Emergency Switches
 
-Mute system/error alerts immediately if chat notifications start getting spammed by polling alerts:
+Mute system/error alerts immediately if chat notifications start getting spammed by operational alerts:
 
 ```bash
 fly secrets set -a hvac-dispatcher SYSTEM_ALERTS_ENABLED=false

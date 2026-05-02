@@ -2,9 +2,9 @@
 
 ## What This Is
 
-AI agent that replaces Eddie's manual texting workflow for his HVAC company. Retell AI voice receptionist takes inbound calls, sends webhook to this agent, which then texts contractors (Jose > Mario > Raul priority order) to find availability, follows up every 5 min, and notifies Eddie when someone confirms.
+AI agent that replaces Eddie's manual texting workflow for his HVAC company. Retell AI voice receptionist takes inbound calls, sends webhook to this agent, which then texts the technician with the job details and customer phone number. The technician contacts the customer directly.
 
-V1 scope: contractor coordination only. Eddie handles customer confirmation manually.
+Current scope: one-shot technician handoff. Job polling, automatic follow-ups, automatic no-reply escalation, and automatic customer confirmation texts are paused by default.
 
 ## Architecture
 
@@ -12,9 +12,9 @@ V1 scope: contractor coordination only. Eddie handles customer confirmation manu
 - SQLite (WAL mode, raw sqlite3, no ORM) for state
 - Twilio SMS for all messaging
 - Retell AI post-call webhook for job intake
-- 12-state deterministic dispatch state machine in `dispatch.py`
+- Deterministic dispatch state machine in `dispatch.py`
 - Regex-first reply classification with GPT-4o-mini fallback in `classifier.py`
-- Polling loop (every 30s) for follow-ups, immediate dispatch from webhook
+- Optional polling loop for follow-ups, disabled unless `JOB_POLLING_ENABLED=true`
 - Fly.io deployment with persistent volume
 
 ## Retell Webhook Format (REAL, from production)
@@ -70,13 +70,12 @@ The parser in `main.py` (lines 100-127) handles all the field name mismatches an
 ### Start the server (dry-run mode, no Twilio needed)
 ```bash
 DRY_RUN=true SKIP_SIGNATURE_VALIDATION=true \
-  FOLLOW_UP_INTERVAL_SECONDS=15 POLL_INTERVAL_SECONDS=5 \
   python3.12 -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
 In dry-run mode:
 - No real SMS sent (no Twilio credentials needed)
-- Follow-ups every 15s, poll every 5s (fast cascade)
+- Job polling remains paused unless `JOB_POLLING_ENABLED=true`
 - `/test/reply` and `/test/eddie` endpoints enabled
 - All messages logged to DB with `DRYRUN_` SID prefix
 
@@ -111,10 +110,10 @@ curl -s -X POST http://localhost:8080/webhook/retell \
 
 ### Simulate contractor replies (dry-run mode)
 ```bash
-# Jose accepts
+# Mario accepts
 curl -s -X POST http://localhost:8080/test/reply \
   -H "Content-Type: application/json" \
-  -d '{"contractor": "Jose", "body": "Yes I can be there at 3pm"}'
+  -d '{"contractor": "Mario", "body": "Yes I can be there at 3pm"}'
 
 # Mario declines
 curl -s -X POST http://localhost:8080/test/reply \
@@ -124,7 +123,7 @@ curl -s -X POST http://localhost:8080/test/reply \
 # Target a specific job
 curl -s -X POST http://localhost:8080/test/reply \
   -H "Content-Type: application/json" \
-  -d '{"contractor": "Jose", "body": "I can do it", "job_id": 3}'
+  -d '{"contractor": "Mario", "body": "I can do it", "job_id": 3}'
 ```
 
 ### Simulate Eddie commands (dry-run mode)
@@ -170,7 +169,7 @@ python3.12 -m pytest -x -q
 | File | What |
 |------|------|
 | `main.py` | FastAPI app, webhook routes, Retell parser |
-| `dispatch.py` | State machine, polling loop, all dispatch logic |
+| `dispatch.py` | State machine, optional polling loop, all dispatch logic |
 | `classifier.py` | Regex + GPT-4o-mini reply classification |
 | `db.py` | SQLite schema, queries, dedup logic |
 | `sms.py` | Twilio send/validate, error alerts |

@@ -30,6 +30,9 @@ def _setup_env(monkeypatch, tmp_path):
     monkeypatch.setenv("JOSE_PHONE", "+15550001111")
     monkeypatch.setenv("MARIO_PHONE", "+15550002222")
     monkeypatch.setenv("RAUL_PHONE", "+15550003333")
+    monkeypatch.setenv("JOSE_ACTIVE", "false")
+    monkeypatch.setenv("MARIO_ACTIVE", "true")
+    monkeypatch.setenv("RAUL_ACTIVE", "true")
     monkeypatch.setenv("EDDIE_PHONE", "+15550009999")
     monkeypatch.setenv("BUILDER_PHONE", "+15550008888")
     monkeypatch.setenv("RETELL_API_KEY", "test-retell-key")
@@ -127,7 +130,7 @@ def test_happy_path_contractor_accepts(
     mock_retell_sig, mock_twilio_sig, mock_classify,
     client, db_mod, conn, dispatch_mod,
 ):
-    """Full flow: Retell webhook creates job -> SMS to Jose -> Jose accepts -> Eddie notified."""
+    """Full flow: Retell webhook creates job -> SMS to Mario -> Mario accepts -> Eddie notified."""
     mock_send_sms.return_value = "SM_FAKE_SID"
     mock_eddie_notify.return_value = "SM_EDDIE_SID"
 
@@ -137,15 +140,15 @@ def test_happy_path_contractor_accepts(
     assert resp.status_code == 200
     job_id = resp.json()["job_id"]
 
-    # Step 2: Verify SMS was sent to Jose (first in priority)
+    # Step 2: Verify SMS was sent to Mario (first active priority)
     assert mock_send_sms.called
-    jose_calls = [c for c in mock_send_sms.call_args_list if c[0][0] == "+15550001111"]
-    assert len(jose_calls) >= 1, "Expected SMS to Jose"
-    assert f"#{job_id}" in jose_calls[0][0][1]
-    assert "Reply YES + ETA" in jose_calls[0][0][1]
-    assert "or NO" in jose_calls[0][0][1]
+    mario_calls = [c for c in mock_send_sms.call_args_list if c[0][0] == "+15550002222"]
+    assert len(mario_calls) >= 1, "Expected SMS to Mario"
+    assert f"#{job_id}" in mario_calls[0][0][1]
+    assert "Customer: Jane Customer (+15551234567)" in mario_calls[0][0][1]
+    assert "Contact the customer directly" in mario_calls[0][0][1]
 
-    # Step 3: Jose replies "yeah tuesday 2pm"
+    # Step 3: Mario replies "yeah tuesday 2pm"
     mock_classify.return_value = {
         "intent": "accepted",
         "time": "Tuesday 2pm",
@@ -154,7 +157,7 @@ def test_happy_path_contractor_accepts(
         "raw_text": "yeah tuesday 2pm",
     }
 
-    resp = _post_twilio(client, "+15550001111", "yeah tuesday 2pm", "SM-jose-001")
+    resp = _post_twilio(client, "+15550002222", "yeah tuesday 2pm", "SM-mario-001")
     assert resp.status_code == 200
 
     # Step 4: Verify classifier was called, job status is contractor_confirmed
@@ -162,18 +165,18 @@ def test_happy_path_contractor_accepts(
 
     job = db_mod.get_job(conn, job_id)
     assert job["status"] == "contractor_confirmed"
-    assert job["current_contractor"] == "Jose"
+    assert job["current_contractor"] == "Mario"
     assert job["confirmed_time"] == "Tuesday 2pm"
 
     # Step 5: Verify Eddie got a notification SMS
     mock_eddie_notify.assert_called()
     eddie_msg = mock_eddie_notify.call_args[0][0]
-    assert "Jose" in eddie_msg
+    assert "Mario" in eddie_msg
     assert "confirmed" in eddie_msg.lower() or "✓" in eddie_msg
 
 
 # ---------------------------------------------------------------------------
-# Test 2: Escalation -- Jose doesn't reply, Mario accepts
+# Test 2: Escalation -- Mario doesn't reply, Raul accepts
 # ---------------------------------------------------------------------------
 
 @patch("dispatch.classify_reply")
@@ -182,12 +185,13 @@ def test_happy_path_contractor_accepts(
 @patch("dispatch.sms.send_error_alert")
 @patch("dispatch.sms.send_eddie_notification")
 @patch("dispatch.sms.send_sms")
-def test_escalation_jose_no_reply_mario_accepts(
+def test_escalation_mario_no_reply_raul_accepts(
     mock_send_sms, mock_eddie_notify, mock_error_alert,
     mock_retell_sig, mock_twilio_sig, mock_classify,
     client, db_mod, conn, dispatch_mod,
 ):
-    """Jose doesn't reply -> follow_up_1 -> follow_up_2 -> escalate to Mario -> Mario accepts."""
+    """Mario doesn't reply -> follow_up_1 -> follow_up_2 -> escalate to Raul -> Raul accepts."""
+    dispatch_mod.config.JOB_POLLING_ENABLED = True
     mock_send_sms.return_value = "SM_FAKE_SID"
     mock_eddie_notify.return_value = "SM_EDDIE_SID"
 
@@ -197,9 +201,9 @@ def test_escalation_jose_no_reply_mario_accepts(
     assert resp.status_code == 200
     job_id = resp.json()["job_id"]
 
-    # Verify SMS sent to Jose
-    jose_calls = [c for c in mock_send_sms.call_args_list if c[0][0] == "+15550001111"]
-    assert len(jose_calls) >= 1, "Expected initial SMS to Jose"
+    # Verify SMS sent to Mario
+    mario_calls = [c for c in mock_send_sms.call_args_list if c[0][0] == "+15550002222"]
+    assert len(mario_calls) >= 1, "Expected initial SMS to Mario"
 
     # Step 3: Trigger follow-up (simulate time passing) -> follow_up_1
     job = db_mod.get_job(conn, job_id)
@@ -212,10 +216,10 @@ def test_escalation_jose_no_reply_mario_accepts(
     assert job["status"] == "follow_up_1"
     assert job["attempt_count"] == 2
 
-    # Step 4: Verify follow-up SMS sent to Jose
-    jose_calls_after = [c for c in mock_send_sms.call_args_list if c[0][0] == "+15550001111"]
-    assert len(jose_calls_after) >= 2, "Expected follow-up SMS to Jose"
-    assert "Following up" in jose_calls_after[-1][0][1]
+    # Step 4: Verify follow-up SMS sent to Mario
+    mario_calls_after = [c for c in mock_send_sms.call_args_list if c[0][0] == "+15550002222"]
+    assert len(mario_calls_after) >= 2, "Expected follow-up SMS to Mario"
+    assert "Following up" in mario_calls_after[-1][0][1]
 
     # Step 5: Trigger another follow-up -> follow_up_2
     dispatch_mod.process_follow_up(conn, job)
@@ -224,19 +228,19 @@ def test_escalation_jose_no_reply_mario_accepts(
     assert job["status"] == "follow_up_2"
     assert job["attempt_count"] == 3
 
-    # Step 6: Max attempts reached, escalate to Mario
+    # Step 6: Max attempts reached, escalate to Raul
     dispatch_mod.process_follow_up(conn, job)
 
     job = db_mod.get_job(conn, job_id)
-    assert job["current_contractor"] == "Mario"
+    assert job["current_contractor"] == "Raul"
     assert job["status"] == "contacting_contractor"
 
-    # Verify SMS sent to Mario
-    mario_calls = [c for c in mock_send_sms.call_args_list if c[0][0] == "+15550002222"]
-    assert len(mario_calls) >= 1, "Expected SMS to Mario"
-    assert f"#{job_id}" in mario_calls[0][0][1]
+    # Verify SMS sent to Raul
+    raul_calls = [c for c in mock_send_sms.call_args_list if c[0][0] == "+15550003333"]
+    assert len(raul_calls) >= 1, "Expected SMS to Raul"
+    assert f"#{job_id}" in raul_calls[0][0][1]
 
-    # Step 7: Mario replies "on my way"
+    # Step 7: Raul replies "on my way"
     mock_classify.return_value = {
         "intent": "accepted",
         "time": None,
@@ -245,17 +249,17 @@ def test_escalation_jose_no_reply_mario_accepts(
         "raw_text": "on my way",
     }
 
-    resp = _post_twilio(client, "+15550002222", "on my way", "SM-mario-001")
+    resp = _post_twilio(client, "+15550003333", "on my way", "SM-raul-001")
     assert resp.status_code == 200
 
-    # Step 8: Verify job confirmed with Mario
+    # Step 8: Verify job confirmed with Raul
     job = db_mod.get_job(conn, job_id)
     assert job["status"] == "contractor_confirmed"
-    assert job["current_contractor"] == "Mario"
+    assert job["current_contractor"] == "Raul"
 
     mock_eddie_notify.assert_called()
     eddie_msg = mock_eddie_notify.call_args[0][0]
-    assert "Mario" in eddie_msg
+    assert "Raul" in eddie_msg
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +276,7 @@ def test_emergency_all_contacted_first_wins(
     mock_retell_sig, mock_twilio_sig, mock_classify,
     client, db_mod, conn, dispatch_mod,
 ):
-    """Emergency: all 3 contractors texted, Jose replies first, others get 'Job taken'."""
+    """Emergency: all active contractors texted, Mario replies first, others get 'Job taken'."""
     mock_send_sms.return_value = "SM_FAKE_SID"
     mock_eddie_notify.return_value = "SM_EDDIE_SID"
 
@@ -282,9 +286,9 @@ def test_emergency_all_contacted_first_wins(
     assert resp.status_code == 200
     job_id = resp.json()["job_id"]
 
-    # Step 2: Verify SMS sent to all 3 contractors
+    # Step 2: Verify SMS sent to all active contractors
     phones_sent = [c[0][0] for c in mock_send_sms.call_args_list]
-    assert "+15550001111" in phones_sent, "Expected SMS to Jose"
+    assert "+15550001111" not in phones_sent, "Jose should be paused"
     assert "+15550002222" in phones_sent, "Expected SMS to Mario"
     assert "+15550003333" in phones_sent, "Expected SMS to Raul"
 
@@ -292,7 +296,7 @@ def test_emergency_all_contacted_first_wins(
     mock_send_sms.reset_mock()
     mock_send_sms.return_value = "SM_FAKE_SID"
 
-    # Step 3: Jose replies "yes"
+    # Step 3: Mario replies "yes"
     mock_classify.return_value = {
         "intent": "accepted",
         "time": None,
@@ -301,48 +305,29 @@ def test_emergency_all_contacted_first_wins(
         "raw_text": "yes",
     }
 
-    resp = _post_twilio(client, "+15550001111", "yes", "SM-jose-emerg-001")
+    resp = _post_twilio(client, "+15550002222", "yes", "SM-mario-emerg-001")
     assert resp.status_code == 200
 
-    # Step 4: Verify job is waiting for Jose's ETA before customer notification
+    # Step 4: Verify the job is confirmed without an ETA/customer text in technician handoff mode
     job = db_mod.get_job(conn, job_id)
-    assert job["status"] == "accepted_waiting_eta"
-    assert job["current_contractor"] == "Jose"
+    assert job["status"] == "contractor_confirmed"
+    assert job["current_contractor"] == "Mario"
+    assert job["confirmed_time"] == "not specified"
     eta_requests = [c for c in mock_send_sms.call_args_list if "Reply with ETA only" in c[0][1]]
-    assert len(eta_requests) == 1
-    assert eta_requests[0][0][0] == "+15550001111"
-    assert "3-4pm" in eta_requests[0][0][1]
+    assert len(eta_requests) == 0
 
     mock_eddie_notify.assert_called()
     eddie_msg = mock_eddie_notify.call_args[0][0]
-    assert "Jose" in eddie_msg
-    assert "did not provide an ETA" in eddie_msg
+    assert "Mario" in eddie_msg
+    assert "Customer was NOT texted automatically" in eddie_msg
 
-    # Step 5: Jose provides the exact ETA reply from production; now the job is confirmed
-    mock_classify.return_value = {
-        "intent": "unclear",
-        "time": None,
-        "reason": None,
-        "condition": None,
-        "raw_text": "Between 3 and 4",
-    }
-
-    resp = _post_twilio(client, "+15550001111", "Between 3 and 4", "SM-jose-emerg-002")
-    assert resp.status_code == 200
-
-    job = db_mod.get_job(conn, job_id)
-    assert job["status"] == "contractor_confirmed"
-    assert job["current_contractor"] == "Jose"
-    assert job["confirmed_time"] == "Between 3 and 4"
-
-    # Step 6: Verify customer was texted and Mario/Raul got job-taken notice
+    # Step 5: Verify customer was not texted and Raul got job-taken notice
     customer_calls = [c for c in mock_send_sms.call_args_list if c[0][0] == "+15551234567"]
-    assert len(customer_calls) == 1
-    assert "Jose is confirmed for Between 3 and 4" in customer_calls[0][0][1]
+    assert len(customer_calls) == 0
 
     taken_calls = [c for c in mock_send_sms.call_args_list if "has been taken" in c[0][1]]
     taken_phones = [c[0][0] for c in taken_calls]
-    assert "+15550002222" in taken_phones, "Expected job-taken notice to Mario"
+    assert "+15550002222" not in taken_phones, "Mario accepted the job"
     assert "+15550003333" in taken_phones, "Expected job-taken notice to Raul"
 
 
@@ -360,7 +345,7 @@ def test_eddie_intervention_conditional_then_ok(
     mock_retell_sig, mock_twilio_sig, mock_classify,
     client, db_mod, conn, dispatch_mod,
 ):
-    """Jose replies with condition -> Eddie gets notified -> Eddie replies OK -> job confirmed."""
+    """Mario replies with condition -> Eddie gets notified -> Eddie replies OK -> job confirmed."""
     mock_send_sms.return_value = "SM_FAKE_SID"
     mock_eddie_notify.return_value = "SM_EDDIE_SID"
 
@@ -370,7 +355,7 @@ def test_eddie_intervention_conditional_then_ok(
     assert resp.status_code == 200
     job_id = resp.json()["job_id"]
 
-    # Step 2: Jose replies "only if before 5pm"
+    # Step 2: Mario replies "only if before 5pm"
     mock_classify.return_value = {
         "intent": "conditional",
         "time": None,
@@ -379,7 +364,7 @@ def test_eddie_intervention_conditional_then_ok(
         "raw_text": "only if before 5pm",
     }
 
-    resp = _post_twilio(client, "+15550001111", "only if before 5pm", "SM-jose-cond-001")
+    resp = _post_twilio(client, "+15550002222", "only if before 5pm", "SM-mario-cond-001")
     assert resp.status_code == 200
 
     # Step 3: Verify Eddie gets conditional notification
@@ -400,7 +385,7 @@ def test_eddie_intervention_conditional_then_ok(
     # Step 5: Verify job confirmed
     job = db_mod.get_job(conn, job_id)
     assert job["status"] == "contractor_confirmed"
-    assert job["current_contractor"] == "Jose"
+    assert job["current_contractor"] == "Mario"
 
     # Eddie should have gotten a confirmation notification
     mock_eddie_notify.assert_called()

@@ -39,6 +39,12 @@ def _next_action_time() -> str:
     return _format_dt(_now_utc() + timedelta(seconds=config.FOLLOW_UP_INTERVAL_SECONDS))
 
 
+def _next_action_time_if_polling_enabled() -> str | None:
+    if not config.JOB_POLLING_ENABLED:
+        return None
+    return _next_action_time()
+
+
 def _should_send_heartbeat_alert(now: datetime, last_created: str | None) -> bool:
     """Return True when the no-new-jobs heartbeat should alert."""
     global _last_heartbeat_alert_at
@@ -70,9 +76,13 @@ def _should_send_heartbeat_alert(now: datetime, last_created: str | None) -> boo
 
 
 def _contractors_by_priority() -> list[dict]:
-    """Return contractor list sorted by priority (ascending)."""
+    """Return active contractors sorted by priority (ascending)."""
     return sorted(
-        [{"name": name, **info} for name, info in config.CONTRACTORS.items()],
+        [
+            {"name": name, **info}
+            for name, info in config.CONTRACTORS.items()
+            if info.get("active", True)
+        ],
         key=lambda c: c["priority"],
     )
 
@@ -95,7 +105,7 @@ def _build_job_sms(job) -> str:
     lines = [f"New Job (#{job['id']})"]
     lines.append(f"Service: {job['service_type'] or 'N/A'}")
     lines.append(f"Address: {job['address'] or 'N/A'}")
-    lines.append(f"Customer: {job['customer_name'] or 'N/A'}")
+    lines.append(f"Customer: {job['customer_name'] or 'N/A'} ({job['phone'] or 'N/A'})")
     lines.append(f"Issue: {job['issue_description'] or 'N/A'}")
     lines.append("")
     lines.append(_contractor_reply_instructions())
@@ -103,7 +113,7 @@ def _build_job_sms(job) -> str:
 
 
 def _contractor_reply_instructions() -> str:
-    return 'Reply YES + ETA (example: YES 3-4pm or YES in 45 min), or NO.'
+    return "Contact the customer directly to confirm and schedule. Reply here only if Eddie needs an update."
 
 
 def _looks_like_acceptance(text: str) -> bool:
@@ -300,7 +310,7 @@ def start_dispatch(conn, job_id):
         f"Issue: {job['issue_description'] or 'N/A'}"
         f"{recording_line}"
         f"{transcript_block}\n\n"
-        f"Contacting contractors now."
+        f"Sending this job to the technician now."
     )
 
     body = _build_job_sms(job)
@@ -333,10 +343,10 @@ def start_dispatch(conn, job_id):
             status="contacting_contractor",
             current_contractor=contacted[0],
             attempt_count=1,
-            next_action_at=_next_action_time(),
+            next_action_at=_next_action_time_if_polling_enabled(),
         )
 
-    else:  # normal priority — always try Jose first
+    else:  # normal priority - try the first active contractor by priority
         for c in contractors:
             if not c["phone"]:
                 continue
@@ -351,7 +361,7 @@ def start_dispatch(conn, job_id):
                 status="contacting_contractor",
                 current_contractor=c["name"],
                 attempt_count=1,
-                next_action_at=_next_action_time(),
+                next_action_at=_next_action_time_if_polling_enabled(),
             )
             return
 
@@ -456,6 +466,8 @@ def process_customer_reply(conn, job, from_number, reply_text, twilio_message_si
 def _handle_accepted(conn, job, contractor_name, result):
     """Handle an accepted reply — confirm the job and notify Eddie."""
     confirmed_time = _confirmed_time_from_result(result)
+    if not confirmed_time and not config.CUSTOMER_CONFIRMATION_SMS_ENABLED:
+        confirmed_time = "not specified"
     if not confirmed_time:
         _handle_accepted_missing_eta(conn, job, contractor_name, result)
         return
@@ -478,18 +490,24 @@ def _confirm_job(conn, job, contractor_name, confirmed_time: str, contractor_res
 
     # Refresh job to get latest data after update
     job = db_module.get_job(conn, job["id"])
-    customer_sent, customer_body, customer_failure_reason = _notify_customer_confirmed(
-        conn, job, contractor_name, time_display
-    )
     summary = _build_eddie_summary(conn, job, contractor_name=contractor_name, time_display=time_display)
-    customer_status = (
-        f"Customer text sent:\n{customer_body}"
-        if customer_sent
-        else (
-            f"Customer text was NOT sent: {customer_failure_reason}\n\n"
-            f"Please contact the customer manually:\n{customer_body}"
+    if config.CUSTOMER_CONFIRMATION_SMS_ENABLED:
+        customer_sent, customer_body, customer_failure_reason = _notify_customer_confirmed(
+            conn, job, contractor_name, time_display
         )
-    )
+        customer_status = (
+            f"Customer text sent:\n{customer_body}"
+            if customer_sent
+            else (
+                f"Customer text was NOT sent: {customer_failure_reason}\n\n"
+                f"Please contact the customer manually:\n{customer_body}"
+            )
+        )
+    else:
+        customer_status = (
+            "Customer was NOT texted automatically. "
+            "Technician has the customer phone number and should contact the customer directly."
+        )
     _notify_eddie(
         conn, job["id"],
         f"✓ CONFIRMED\n\n{summary}\n\n{customer_status}"
@@ -596,7 +614,7 @@ def escalate_to_next(conn, job):
             status="contacting_contractor",
             current_contractor=c["name"],
             attempt_count=1,
-            next_action_at=_next_action_time(),
+            next_action_at=_next_action_time_if_polling_enabled(),
         )
 
         _notify_eddie(
@@ -636,6 +654,10 @@ def _get_unreplied_contractors(conn, job_id):
 
 def process_follow_up(conn, job):
     """Send a follow-up or escalate if max attempts reached."""
+    if not config.JOB_POLLING_ENABLED:
+        logger.info("Job polling disabled; skipping follow-up for job %s", job["id"])
+        return
+
     attempt = job["attempt_count"]
 
     if attempt < config.MAX_ATTEMPTS_PER_CONTRACTOR:
