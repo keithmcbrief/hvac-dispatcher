@@ -33,7 +33,7 @@ def test_twilio_prefers_twilio_prefix(monkeypatch):
 
 
 def test_contractors_structure(monkeypatch):
-    """Contractors dict should keep Jose paused and preserve original priority order."""
+    """Contractors dict should keep Jose active and preserve original priority order."""
     monkeypatch.setenv("JOSE_PHONE", "+15551110001")
     monkeypatch.setenv("MARIO_PHONE", "+15551110002")
     monkeypatch.setenv("RAUL_PHONE", "+15551110003")
@@ -48,9 +48,20 @@ def test_contractors_structure(monkeypatch):
     assert config.CONTRACTORS["Mario"]["priority"] == 2
     assert config.CONTRACTORS["Raul"]["priority"] == 3
     assert config.CONTRACTORS["Jose"]["phone"] == "+15551110001"
-    assert config.CONTRACTORS["Jose"]["active"] is False
+    assert config.CONTRACTORS["Jose"]["active"] is True
     assert config.CONTRACTORS["Mario"]["active"] is True
     assert config.CONTRACTORS["Raul"]["active"] is True
+
+
+def test_jose_can_be_paused(monkeypatch):
+    """JOSE_ACTIVE=false should temporarily remove Jose from outbound dispatch."""
+    monkeypatch.setenv("JOSE_PHONE", "+15551110001")
+    monkeypatch.setenv("JOSE_ACTIVE", "false")
+
+    import config
+    importlib.reload(config)
+
+    assert config.CONTRACTORS["Jose"]["active"] is False
 
 
 def test_contractor_phones_reverse_lookup(monkeypatch):
@@ -63,7 +74,7 @@ def test_contractor_phones_reverse_lookup(monkeypatch):
     import config
     importlib.reload(config)
 
-    # Jose stays recognizable for replies to any already-assigned jobs while paused.
+    # Jose stays recognizable for replies regardless of current dispatch availability.
     assert config.CONTRACTOR_PHONES["+15551110001"] == "Jose"
     assert config.CONTRACTOR_PHONES["+15551110002"] == "Mario"
     assert config.CONTRACTOR_PHONES["+15551110003"] == "Raul"

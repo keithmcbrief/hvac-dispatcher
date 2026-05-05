@@ -41,12 +41,12 @@ BUSINESS_NAME = os.getenv("BUSINESS_NAME", "Residential AC & Heating")
 EDDIE_PHONE = os.getenv("EDDIE_PHONE", "")
 
 # Contractors - ordered by priority.
-# Jose is temporarily paused. Set JOSE_ACTIVE=true to restore the original order.
+# Set JOSE_ACTIVE=false to pause Jose temporarily.
 CONTRACTORS = {
     "Jose": {
         "phone": os.getenv("JOSE_PHONE", ""),
         "priority": 1,
-        "active": _env_bool("JOSE_ACTIVE", "false"),
+        "active": _env_bool("JOSE_ACTIVE", "true"),
     },
     "Mario": {
         "phone": os.getenv("MARIO_PHONE", ""),

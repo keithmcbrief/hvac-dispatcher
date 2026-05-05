@@ -64,7 +64,7 @@ Fill in the required values in `.env`:
 - `MARIO_PHONE`
 - `RAUL_PHONE`
 
-Jose is temporarily paused for outbound dispatch with `JOSE_ACTIVE=false`; Mario is the first active contractor.
+Jose is the first contractor by priority. Set `JOSE_ACTIVE=false` if he needs to be paused temporarily.
 
 For local simulation without real SMS:
 
@@ -137,7 +137,7 @@ fly secrets set -a hvac-dispatcher \
   JOSE_PHONE="+1..." \
   MARIO_PHONE="+1..." \
   RAUL_PHONE="+1..." \
-  JOSE_ACTIVE=false \
+  JOSE_ACTIVE=true \
   MARIO_ACTIVE=true \
   RAUL_ACTIVE=true \
   NOTIFICATIONS_ENABLED=true \
